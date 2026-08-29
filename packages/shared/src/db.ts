@@ -8,6 +8,7 @@ import { Pool, PoolClient, PoolConfig, types } from 'pg';
 // money corruption (PLAN.md §2.4). Do NOT switch to BigInt — JSON.stringify
 // throws on BigInt values and would take down every response serializer.
 types.setTypeParser(20, (v: string) => parseInt(v, 10));
+types.setTypeParser(1700, (v: string) => parseInt(v, 10));
 
 export function createPool(config: PoolConfig): Pool {
   return new Pool(config);
