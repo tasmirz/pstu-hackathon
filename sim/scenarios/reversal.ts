@@ -74,17 +74,28 @@ export const REV_03: Scenario = {
 
     // Drain B entirely to C — B has now spent everything it received.
     const bBal = await ctx.balance(b);
-    const drain = await ctx.transfer(b, c, bBal);
-    ctx.expectEq(drain.status, 201, 'B drained to C');
+    const suB = await ctx.client.stepUp(b.access_token, 'PIN', b.pin);
+    let remaining = bBal;
+    while (remaining > 0) {
+      const chunk = Math.min(500_000, remaining);
+      const drain = await ctx.client.transfer(b.access_token, c.user.phone, chunk, {
+        idemKey: ctx.uuid(),
+        stepUpToken: suB.body.step_up_token,
+      });
+      ctx.expectEq(drain.status, 201, 'drain chunk completed');
+      remaining -= chunk;
+    }
     ctx.expectEq(await ctx.balance(b), 0, 'B has nothing left');
+    const beforeA = await ctx.balance(a);
+    const beforeC = await ctx.balance(c);
 
     // A reverses the original transfer; B cannot cover it -> 402, no money fabricated.
     const suA = await ctx.client.stepUp(a.access_token, 'PIN', a.pin);
     const rev = await ctx.client.reverse(a.access_token, txnId, ctx.uuid(), suA.body.step_up_token);
     ctx.expectEq(rev.status, 402, 'reversal fails — receiver already spent it');
     ctx.expectEq(rev.body.error, 'INSUFFICIENT_FUNDS', 'INSUFFICIENT_FUNDS');
-    ctx.expectEq(await ctx.balance(a), await ctx.balance(a), 'sender unchanged');
-    ctx.expectEq(await ctx.balance(c), await ctx.balance(c), 'recipient of drain unchanged');
+    ctx.expectEq(await ctx.balance(a), beforeA, 'sender unchanged');
+    ctx.expectEq(await ctx.balance(c), beforeC, 'recipient of drain unchanged');
   },
 };
 
@@ -103,8 +114,8 @@ export const REV_04: Scenario = {
     const reversalId = first.body.reversal.id;
 
     // Attempt to reverse the REVERSAL itself.
-    const su2 = await ctx.client.stepUp(a.access_token, 'PIN', a.pin);
-    const second = await ctx.client.reverse(a.access_token, reversalId, ctx.uuid(), su2.body.step_up_token);
+    const su2 = await ctx.client.stepUp(b.access_token, 'PIN', b.pin);
+    const second = await ctx.client.reverse(b.access_token, reversalId, ctx.uuid(), su2.body.step_up_token);
     ctx.expectEq(second.status, 409, 'reversal of a reversal blocked');
     ctx.expectEq(second.body.error, 'INVALID_STATE', 'INVALID_STATE');
   },

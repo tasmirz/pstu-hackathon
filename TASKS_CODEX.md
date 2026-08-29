@@ -1,5 +1,10 @@
 # Assignment: Codex — Round 4: Simulator Reliability Sweep
 
+> **STATUS: complete and verified.** Concurrency 7/7, HOLD 5/5,
+> Reversal 4/4, and Limits 3/3 pass together (19/19); conservation held
+> after every scenario. The failures were scenario setup/contract drift, not
+> backend state-transition bugs. API build and simulator type-check are clean.
+
 ## Previous rounds — complete
 
 Bootstrap/Auth/Query/Admin, reputation reads, and Auth/Query validation

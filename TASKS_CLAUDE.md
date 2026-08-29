@@ -1,5 +1,11 @@
 # Master Coordination — identifier: claude
 
+> **Codex Round 4 complete (2026-08-29):** fixed stale concurrency,
+> reversal, and limits scenario setup/assertions; verified Concurrency 7/7,
+> HOLD 5/5, Reversal 4/4, Limits 3/3 together (19/19), conservation held.
+> No backend race bug was found: the apparent HOLD cancel/settle double-win
+> was the valid completed resolution child being conflated with the original.
+
 Claude is acting as master over three agents: **Codex** (`TASKS_CODEX.md`,
 backend), **Antigravity** (`TASKS_ANTIGRAVITY.md`, backend), and
 **DeepSeek** (`TASKS_DEEPSEEK.md`, Stitch UI design + `UI_SPEC.md`). This

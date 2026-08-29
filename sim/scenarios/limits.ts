@@ -22,7 +22,7 @@ export const LIM_01: Scenario = {
       idemKey: ctx.uuid(),
       stepUpToken,
     });
-    ctx.expectEq(first.status, 201, 'first under cap accepted');
+    ctx.expectEq(first.status, 202, 'first under cap accepted into HOLD');
 
     const second = await ctx.client.transfer(a.access_token, b.user.phone, 200_000, {
       idemKey: ctx.uuid(),
@@ -68,7 +68,7 @@ export const LIM_03: Scenario = {
       idemKey: ctx.uuid(),
       stepUpToken: su.body.step_up_token,
     });
-    ctx.expectEq(res.status, 201, 'override allows above default cap');
+    ctx.expectEq(res.status, 202, 'override allows above default cap into HOLD');
   },
 };
 

@@ -48,6 +48,13 @@ export const CON_02: Scenario = {
     const amount = Math.floor(balance / 3) + 100; // 3x this exceeds balance
     const before = balance;
 
+    await ctx.adminPool.query(
+      `INSERT INTO ledger.limit_overrides (user_id, daily_send_limit, set_by, reason)
+       VALUES ($1, 1000000000, $1, 'simulator: CON-02 balance race')
+       ON CONFLICT (user_id) DO UPDATE SET daily_send_limit = EXCLUDED.daily_send_limit`,
+      [a.user.id],
+    );
+
     const su = await ctx.client.stepUp(a.access_token, 'PIN', a.pin);
     const results = await Promise.all(
       Array.from({ length: 5 }, () =>
@@ -55,7 +62,7 @@ export const CON_02: Scenario = {
       ),
     );
 
-    const succeeded = results.filter((r) => r.status === 201).length;
+    const succeeded = results.filter((r) => r.status < 300).length;
     const failed = results.filter((r) => r.status === 402).length;
     ctx.expect(succeeded > 0 && succeeded < 5, `some but not all succeeded (${succeeded})`);
     ctx.expectEq(succeeded + failed, 5, 'each request either succeeded or insufficient-funds');
@@ -145,15 +152,18 @@ export const CON_04: Scenario = {
 
     // Exactly one of two valid outcomes: cancelled (money returned) or
     // settled-by-sweeper (money gone to receiver). Never both, never nothing.
-    const { rows } = await ctx.adminPool.query(
-      `SELECT state, COUNT(*)::int AS children FROM ledger.transactions
-        WHERE id = $1 OR parent_txn_id = $1 GROUP BY state`,
+    const original = await ctx.adminPool.query<{ state: string }>(
+      `SELECT state FROM ledger.transactions WHERE id = $1`,
       [txnId],
     );
-    const states = rows.map((r: any) => r.state).sort();
-    const cancelled = states.includes('CANCELLED');
-    const completed = states.includes('COMPLETED');
-    ctx.expect(cancelled !== completed, `exactly one of CANCELLED/COMPLETED — got ${states.join(',')}`);
+    const children = await ctx.adminPool.query<{ kind: string; state: string }>(
+      `SELECT kind, state FROM ledger.transactions WHERE parent_txn_id = $1 ORDER BY id`,
+      [txnId],
+    );
+    ctx.expectEq(children.rows.length, 1, 'exactly one resolution transaction');
+    const expectedKind = original.rows[0].state === 'CANCELLED' ? 'HOLD_CANCEL' : 'HOLD_SETTLE';
+    ctx.expectEq(children.rows[0].kind, expectedKind, 'resolution child matches original terminal state');
+    ctx.expectEq(children.rows[0].state, 'COMPLETED', 'resolution child completed');
     const after = await ctx.balance(a);
     ctx.expect(after >= 0, 'sender balance never negative');
     void cancel;
@@ -192,7 +202,7 @@ export const CON_06: Scenario = {
     // requester asks payerA; payerB is a stranger who cannot legally pay, but
     // the request is 1:1 — the meaningful race is two pays by the SAME payer
     // where only one can win (CAS PENDING->PAID).
-    const req = await ctx.client.createRequest(payerA.access_token, requester.user.phone, amount, 'race');
+    const req = await ctx.client.createRequest(requester.access_token, payerA.user.phone, amount, 'race');
     const requestId = req.body.id;
 
     const su = await ctx.client.stepUp(payerA.access_token, 'PIN', payerA.pin);
@@ -216,7 +226,7 @@ export const CON_07: Scenario = {
   async run(ctx) {
     const [requester, payer] = await ctx.freshUsers(2, 'CON07');
     const amount = 80_000;
-    const req = await ctx.client.createRequest(payer.access_token, requester.user.phone, amount, 'decline-v-pay');
+    const req = await ctx.client.createRequest(requester.access_token, payer.user.phone, amount, 'decline-v-pay');
     const requestId = req.body.id;
 
     const su = await ctx.client.stepUp(payer.access_token, 'PIN', payer.pin);
