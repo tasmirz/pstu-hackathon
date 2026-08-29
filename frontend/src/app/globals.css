@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #032dbc;
+  --color-primary-hover: #0f33c0;
+  --color-primary-container: #2e4ad3;
+  --color-on-primary: #ffffff;
+  --color-on-primary-container: #c9cfff;
+  --color-primary-fixed: #dee0ff;
+  --color-primary-fixed-dim: #bac3ff;
+
+  --color-surface: #f8f9ff;
+  --color-surface-bright: #f8f9ff;
+  --color-surface-dim: #cbdbf5;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #eff4ff;
+  --color-surface-container: #e5eeff;
+  --color-surface-container-high: #dce9ff;
+  --color-surface-container-highest: #d3e4fe;
+
+  --color-on-surface: #0b1c30;
+  --color-on-surface-variant: #444654;
+  --color-outline: #757686;
+  --color-outline-variant: #c5c5d7;
+
+  --color-secondary: #565e74;
+  --color-secondary-container: #dae2fd;
+  --color-on-secondary: #ffffff;
+  --color-on-secondary-container: #5c647a;
+
+  --color-tertiary: #792700;
+  --color-tertiary-container: #a03600;
+  --color-tertiary-fixed: #ffdbcf;
+  --color-tertiary-fixed-dim: #ffb59a;
+  --color-on-tertiary-fixed: #380d00;
+  --color-on-tertiary-fixed-variant: #802a00;
+
+  --color-error: #ba1a1a;
+  --color-error-container: #ffdad6;
+  --color-on-error: #ffffff;
+  --color-on-error-container: #93000a;
+
+  --color-success: #059669;
+  --color-success-container: #d1fae5;
+  --color-on-success-container: #065f46;
+
+  --font-mono-data: "Roboto Mono", "JetBrains Mono", monospace;
+  --font-display: "Inter", system-ui, -apple-system, sans-serif;
+  --font-body: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+:root {
+  --background: #f8f9ff;
+  --foreground: #0b1c30;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Kinetic Ledger Utility Classes */
+.font-mono-data {
+  font-family: var(--font-mono-data);
+  font-variant-numeric: tabular-nums;
+}
+
+.glow-update {
+  animation: pulse-indigo 1.2s cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+@keyframes pulse-indigo {
+  0%, 100% {
+    background-color: transparent;
+  }
+  50% {
+    background-color: rgba(46, 74, 211, 0.15);
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f8f9ff;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c5c5d7;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #757686;
+}
