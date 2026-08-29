@@ -10,7 +10,7 @@ import { Scenario } from '../harness/types';
 export const DIS_01: Scenario = {
   id: 'DIS-01',
   name: 'Sender raises a dispute: state OPEN, no money moves',
-  tags: ['dispute', 'tier2'],
+  tags: ['disputes', 'dispute', 'tier2'],
   async run(ctx) {
     const [a, b] = await ctx.freshUsers(2, 'DIS01');
     const txn = await ctx.transfer(a, b, 150_000);
@@ -29,7 +29,7 @@ export const DIS_01: Scenario = {
 export const DIS_02: Scenario = {
   id: 'DIS-02',
   name: 'Receiver may also raise one on the same transaction type',
-  tags: ['dispute', 'tier2'],
+  tags: ['disputes', 'dispute', 'tier2'],
   async run(ctx) {
     const [a, b] = await ctx.freshUsers(2, 'DIS02');
     const txn = await ctx.transfer(a, b, 90_000);
@@ -43,7 +43,7 @@ export const DIS_02: Scenario = {
 export const DIS_03: Scenario = {
   id: 'DIS-03',
   name: 'Second dispute while one is open: 409 DISPUTE_ALREADY_OPEN',
-  tags: ['dispute', 'tier2'],
+  tags: ['disputes', 'dispute', 'tier2'],
   async run(ctx) {
     const [a, b] = await ctx.freshUsers(2, 'DIS03');
     const txn = await ctx.transfer(a, b, 80_000);
@@ -59,7 +59,7 @@ export const DIS_03: Scenario = {
 export const DIS_04: Scenario = {
   id: 'DIS-04',
   name: 'A non-party raising a dispute: 403 NOT_A_PARTY',
-  tags: ['dispute', 'tier2'],
+  tags: ['disputes', 'dispute', 'tier2'],
   async run(ctx) {
     const [a, b, stranger] = await ctx.freshUsers(3, 'DIS04');
     const txn = await ctx.transfer(a, b, 60_000);
@@ -74,7 +74,7 @@ export const DIS_04: Scenario = {
 export const DIS_05: Scenario = {
   id: 'DIS-05',
   name: 'Transaction older than 7 days: 422 DISPUTE_WINDOW_CLOSED',
-  tags: ['dispute', 'tier2'],
+  tags: ['disputes', 'dispute', 'tier2'],
   async run(ctx) {
     const [a, b] = await ctx.freshUsers(2, 'DIS05');
     const txn = await ctx.transfer(a, b, 50_000);
@@ -94,7 +94,7 @@ export const DIS_05: Scenario = {
 export const DIS_06: Scenario = {
   id: 'DIS-06',
   name: 'Admin REVERSE: reversal txn created, original untouched, dispute REVERSED',
-  tags: ['dispute', 'tier2'],
+  tags: ['disputes', 'dispute', 'tier2'],
   async run(ctx) {
     const [a, b, admin] = await ctx.freshUsers(3, 'DIS06');
     await ctx.makeAdmin(admin);
@@ -128,7 +128,7 @@ export const DIS_06: Scenario = {
 export const DIS_07: Scenario = {
   id: 'DIS-07',
   name: 'Admin REVERSE when receiver already spent it: 402, dispute stays OPEN, attempts incremented',
-  tags: ['dispute', 'tier2'],
+  tags: ['disputes', 'dispute', 'tier2'],
   async run(ctx) {
     const [a, b, c, admin] = await ctx.freshUsers(4, 'DIS07');
     await ctx.makeAdmin(admin);
@@ -171,7 +171,7 @@ export const DIS_07: Scenario = {
 export const DIS_08: Scenario = {
   id: 'DIS-08',
   name: 'Admin REJECT: dispute REJECTED, zero entries written',
-  tags: ['dispute', 'tier2'],
+  tags: ['disputes', 'dispute', 'tier2'],
   async run(ctx) {
     const [a, b, admin] = await ctx.freshUsers(3, 'DIS08');
     await ctx.makeAdmin(admin);
@@ -200,7 +200,7 @@ export const DIS_08: Scenario = {
 export const DIS_09: Scenario = {
   id: 'DIS-09',
   name: 'Resolve without resolution text: rejected by the DB constraint',
-  tags: ['dispute', 'tier2'],
+  tags: ['disputes', 'dispute', 'tier2'],
   async run(ctx) {
     const [a, b, admin] = await ctx.freshUsers(3, 'DIS09');
     await ctx.makeAdmin(admin);
@@ -226,7 +226,7 @@ export const DIS_09: Scenario = {
 export const DIS_10: Scenario = {
   id: 'DIS-10',
   name: 'Two admins resolve the same dispute concurrently: exactly one wins',
-  tags: ['dispute', 'tier2'],
+  tags: ['disputes', 'dispute', 'tier2'],
   async run(ctx) {
     const [a, b, admin1, admin2] = await ctx.freshUsers(4, 'DIS10');
     await ctx.makeAdmin(admin1);
@@ -253,7 +253,7 @@ export const DIS_10: Scenario = {
 export const DIS_11: Scenario = {
   id: 'DIS-11',
   name: 'Every resolution wrote an audit_log row with before/after',
-  tags: ['dispute', 'tier2'],
+  tags: ['disputes', 'dispute', 'tier2'],
   async run(ctx) {
     const [a, b, admin] = await ctx.freshUsers(3, 'DIS11');
     await ctx.makeAdmin(admin);

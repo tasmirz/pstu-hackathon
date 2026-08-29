@@ -359,7 +359,15 @@ export class BillsService {
         throw new InvalidState('Only OPEN bills can be cancelled');
       }
 
-      // Cancel only pending shares — already paid shares moved real money
+      const paidShareCheck = await t.query(
+        `SELECT 1 FROM ledger.bill_shares WHERE bill_id = $1 AND state = 'PAID' LIMIT 1`,
+        [billId],
+      );
+      if (paidShareCheck.rowCount > 0) {
+        throw new InvalidState('Cannot cancel a bill where shares have already been paid');
+      }
+
+      // Cancel only pending shares
       await t.query(`UPDATE ledger.bill_shares SET state = 'CANCELLED' WHERE bill_id = $1 AND state = 'PENDING'`, [
         billId,
       ]);
@@ -375,6 +383,10 @@ export class BillsService {
       return {
         id: bill.id,
         state: 'CANCELLED',
+        bill: {
+          id: bill.id,
+          state: 'CANCELLED',
+        },
       };
     });
   }

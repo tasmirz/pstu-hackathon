@@ -45,6 +45,7 @@ export class BillsController {
   }
 
   @Post(':id/pay')
+  @HttpCode(200)
   pay(
     @CurrentUser() user: { id: number },
     @Param('id', ParseIntPipe) id: number,
@@ -60,6 +61,7 @@ export class BillsController {
   }
 
   @Post(':id/cancel')
+  @HttpCode(200)
   cancel(@CurrentUser() user: { id: number }, @Param('id', ParseIntPipe) id: number) {
     return this.bills.cancel(user.id, id);
   }

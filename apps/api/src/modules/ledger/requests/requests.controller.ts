@@ -16,6 +16,7 @@ export class RequestsController {
   }
 
   @Post(':id/pay')
+  @HttpCode(200)
   pay(
     @CurrentUser() user: { id: number },
     @Param('id', ParseIntPipe) id: number,
@@ -31,16 +32,19 @@ export class RequestsController {
   }
 
   @Post(':id/decline')
+  @HttpCode(200)
   decline(@CurrentUser() user: { id: number }, @Param('id', ParseIntPipe) id: number) {
     return this.requests.decline(user.id, id);
   }
 
   @Post(':id/cancel')
+  @HttpCode(200)
   cancel(@CurrentUser() user: { id: number }, @Param('id', ParseIntPipe) id: number) {
     return this.requests.cancel(user.id, id);
   }
 
   @Post(':id/remind')
+  @HttpCode(200)
   remind(@CurrentUser() user: { id: number }, @Param('id', ParseIntPipe) id: number) {
     return this.requests.remind(user.id, id);
   }
