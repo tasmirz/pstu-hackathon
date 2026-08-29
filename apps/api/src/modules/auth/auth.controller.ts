@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, Post, UseGuards } from '@nestjs/common
 import { CurrentUser } from '../../common/decorators';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { AuthService } from './auth.service';
-import { ChangePinDto, LoginDto, RefreshTokenDto, RegisterDto, StepUpDto } from './dto';
+import { ChangePinDto, LoginDto, RefreshTokenDto, RegisterDto, StepUpDto, VerifyTotpDto } from './dto';
 
 @Controller('auth')
 export class AuthController {
@@ -49,6 +49,20 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   changePin(@CurrentUser() user: { id: number }, @Body() dto: ChangePinDto) {
     return this.auth.changePin(user.id, dto.current_pin, dto.new_pin);
+  }
+
+  @Post('totp/setup')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  totpSetup(@CurrentUser() user: { id: number }) {
+    return this.auth.totpSetup(user.id);
+  }
+
+  @Post('totp/verify')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  totpVerify(@CurrentUser() user: { id: number }, @Body() dto: VerifyTotpDto) {
+    return this.auth.totpVerify(user.id, dto.code);
   }
 
   @Post('step-up')

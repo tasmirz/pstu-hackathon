@@ -1,9 +1,9 @@
 import { Scenario } from '../harness/types';
+import { generateTotp } from '@pstu/shared';
 
 /**
  * AUTH — SIMULATOR.md §4, Tier 2. Refresh rotation, family revocation on
- * replay, PIN lockout, logout-all via token_version. AUTH-05 (TOTP replay)
- * is out of scope — the backend ships PIN step-up only.
+ * replay, PIN lockout, logout-all via token_version, and TOTP 2FA step-up.
  */
 
 export const AUTH_01: Scenario = {
@@ -86,4 +86,40 @@ export const AUTH_04: Scenario = {
   },
 };
 
-export const authScenarios: Scenario[] = [AUTH_01, AUTH_02, AUTH_03, AUTH_04];
+export const AUTH_05: Scenario = {
+  id: 'AUTH-05',
+  name: 'TOTP setup, verify, and step-up authentication',
+  tags: ['auth', 'totp', 'tier2'],
+  async run(ctx) {
+    const u = await ctx.freshUser('AUTH05');
+
+    // 1. Initially TOTP not enrolled
+    const meBefore = await ctx.client.me(u.access_token);
+    ctx.expectEq(meBefore.body.totp_enrolled, false, 'totp not enrolled initially');
+
+    // 2. Setup TOTP -> returns secret and otpauth_url
+    const setup = await ctx.client.totpSetup(u.access_token);
+    ctx.expectEq(setup.status, 200, 'setup ok');
+    ctx.expect(!!setup.body.secret, 'secret returned');
+    ctx.expect(setup.body.otpauth_url.includes(encodeURIComponent(u.user.phone)), 'otpauth_url formatted with phone');
+
+    // 3. Verify with invalid code -> 401
+    const invalidVerify = await ctx.client.totpVerify(u.access_token, '000000');
+    ctx.expectEq(invalidVerify.status, 401, 'invalid code rejected');
+
+    // 4. Verify with valid TOTP code
+    const validCode = generateTotp(setup.body.secret);
+    const verify = await ctx.client.totpVerify(u.access_token, validCode);
+    ctx.expectEq(verify.status, 200, 'verify ok');
+
+    const meAfter = await ctx.client.me(u.access_token);
+    ctx.expectEq(meAfter.body.totp_enrolled, true, 'totp enrolled now');
+
+    // 5. Step-up with TOTP
+    const su = await ctx.client.stepUp(u.access_token, 'TOTP', validCode);
+    ctx.expectEq(su.status, 200, 'step-up with TOTP succeeded');
+    ctx.expect(!!su.body.step_up_token, 'step_up_token returned');
+  },
+};
+
+export const authScenarios: Scenario[] = [AUTH_01, AUTH_02, AUTH_03, AUTH_04, AUTH_05];

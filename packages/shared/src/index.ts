@@ -5,3 +5,4 @@ export * from './jwt';
 export * from './ids';
 export * from './hash';
 export * from './types';
+export * from './totp';

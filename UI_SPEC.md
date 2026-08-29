@@ -57,6 +57,28 @@ Map the backend's `error` code to one plain sentence each. Never show a raw code
 - Centrifugo: subscribe on login with the token from `GET /auth/ws-token`. **If the socket is down the app still works** — fall back to refetching `GET /accounts/me/balance` after each send. Never let a dropped WS block the send flow or hide an error.
 - Access token in memory; refresh token in `localStorage` (fine for a demo). Silent-refresh on `401` before anything visibly breaks.
 
+### 0.5 Role gating — admin surfaces are invisible to regular users
+
+The access token carries the `role` claim (`USER` / `ADMIN`). Every admin surface —
+Ledger Integrity (§7), the Admin Dispute Queue / Resolution (§10), Admin Console &
+Health Monitor (§10), and any simulator-presentation surface — is **only rendered
+when `role === 'ADMIN'`**. A regular user sees:
+
+- **no nav link** to any admin surface (sidebar, top nav, footer — nowhere);
+- **no route** registered in their router that could be typed or bookmarked;
+- **no hint** that the surface exists — do not grey out or label an admin entry
+  "admin only"; it simply is not in the UI.
+
+This is not cosmetic: the backend returns `403` for non-admins on every `/admin/*`
+route (VALID-12 in the sim proves it). The UI's job is to not advertise what the
+API will refuse — a regular user must not even know the surface is there. The one
+place this bit before: the Dashboard sidebar carried a "System Status" link that
+pointed at Ledger Integrity — **removed from the regular-user Dashboard** (Stitch
+screen `fdf0d88655ea46f4974f976d0f8b3b48`). Do not reintroduce it.
+
+The admin screens themselves are designed and valid — they are simply reachable
+only by an admin (whose sidebar shows Dashboard / History / **Admin** entries).
+
 ---
 
 ## 1. Screen inventory
@@ -110,7 +132,7 @@ All screens below exist in the Stitch project **"Ledger Flow Money Movement"** (
 | Ledger Integrity | §7 |
 | Request Money - Step 1 · Money Requests - Inbox & Outbox | §8 |
 | Limits & Velocity | §10 |
-| Admin Dispute Queue · Admin Dispute Resolution · Admin Console & Health Monitor | §10 |
+| Admin Dispute Queue · Admin Dispute Resolution · Admin Console & Health Monitor | §10 · **admin-only** (§0.5) |
 | Create a Bill · Shared Bill - Detail | §11 |
 
 ---
@@ -395,7 +417,7 @@ Keep this the plainest screen in the app. No chart, no gradient. It should look 
 
 - From `GET /admin/integrity`. Refresh on tap; no websocket needed.
 - **On failure show the actual numbers**: `Sum: ৳140.00 — expected ৳0.00`, and list offending account ids beneath. Never hide a failure behind a generic red X — if this fails live, showing exactly what broke is a far better recovery than a vague error.
-- Reachable by direct URL, **not** from the main nav. It is a judge-facing proof page, not a user feature.
+- Reachable by direct URL, **not** from the main nav. It is a judge-facing proof page, not a user feature. **Admin-only** (§0.5): a regular user has no link, no route, and no hint this surface exists — the API returns `403` for them anyway, and the UI must not advertise it. (The Dashboard sidebar previously pointed "System Status" here for all users; that link is removed for `role=USER`.)
 
 ---
 
@@ -460,6 +482,10 @@ Persistent bar on Dashboard while any transfer is `HELD`. **Designed in Stitch**
 
 ### Admin dispute queue — **P1** — *the only screen where an admin moves money*
 
+**Admin-only** (§0.5): rendered only for `role=ADMIN`. A regular user has no
+link, no route, and no hint this surface exists. The admin's sidebar shows
+Dashboard / History / **Admin** — distinct from the regular-user sidebar.
+
 ```
 ┌──────────────────────────────────────────────────────┐
 │  Open disputes  (3)                                   │
@@ -484,7 +510,7 @@ Persistent bar on Dashboard while any transfer is `HELD`. **Designed in Stitch**
 - `Reverse` → `402` → keep the dispute in the list, show *"Reversal failed — Karim's balance is ৳400.00. Retry later or reject."* and increment the visible attempt count. **Do not remove the row.** This is the flow worth rehearsing: it's the one that demonstrates the system refusing to fabricate money.
 - Resolved disputes move to a `Resolved` tab showing who resolved them and when.
 
-**Rest of admin console (P2)** — freeze/unfreeze, outbox monitor, load-test trigger. The Integrity page already carries the demo; this is garnish. If you build one more thing, make it the **simulator run button** so the Phase 3 board can be launched from the UI on stage.
+**Rest of admin console (P2)** — freeze/unfreeze, outbox monitor, load-test trigger. The Integrity page already carries the demo; this is garnish. If you build one more thing, make it the **simulator run button** so the Phase 3 board can be launched from the UI on stage. **Admin-only** (§0.5) — same invisible-to-regular-users rule as the rest of the admin surface.
 
 ---
 

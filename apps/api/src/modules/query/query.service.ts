@@ -18,12 +18,22 @@ export class QueryService {
       [userId],
     );
     const balancePaisa = result.rows[0].balance_paisa;
-    // HOLD accounts are not created until the deferred undo-window feature is implemented.
-    const heldPaisa = result.rows[0].held_paisa;
+    const holdAccountPaisa = result.rows[0].held_paisa;
+
+    const disputeHoldRes = await this.pool.query(
+      `SELECT COALESCE(SUM(d.secured_amount), 0) AS dispute_holds
+       FROM ledger.disputes d
+       JOIN ledger.transactions t ON t.id = d.txn_id
+       WHERE t.receiver_id = $1 AND d.state = 'OPEN'`,
+      [userId],
+    );
+    const disputeHolds = parseInt(disputeHoldRes.rows[0]?.dispute_holds ?? '0', 10);
+    const totalHeld = holdAccountPaisa + disputeHolds;
+
     return {
       balance_paisa: balancePaisa,
-      held_paisa: heldPaisa,
-      available_paisa: balancePaisa - heldPaisa,
+      held_paisa: totalHeld,
+      available_paisa: Math.max(0, balancePaisa - totalHeld),
     };
   }
 

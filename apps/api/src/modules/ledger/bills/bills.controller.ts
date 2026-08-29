@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, Param, ParseIntPipe, Post, Query, UseG
 import { CurrentUser, IdempotencyKey, StepUpToken } from '../../../common/decorators';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { BillsService } from './bills.service';
-import { CreateBillDto } from './dto';
+import { CreateBillDto, PayBillDto } from './dto';
 
 @Controller('bills')
 @UseGuards(JwtAuthGuard)
@@ -12,14 +12,16 @@ export class BillsController {
   @Post()
   @HttpCode(201)
   create(@CurrentUser() user: { id: number }, @Body() dto: CreateBillDto) {
-    return this.bills.create(
-      user.id,
-      dto.title,
-      dto.shares.map((s) => ({
+    return this.bills.create({
+      creatorId: user.id,
+      title: dto.title,
+      splitMode: dto.split_mode,
+      totalAmountPaisa: dto.total_amount_paisa,
+      shares: dto.shares.map((s) => ({
         phone: s.phone,
         amount_paisa: s.amount_paisa,
       })),
-    );
+    });
   }
 
   @Get('mine')
@@ -49,12 +51,14 @@ export class BillsController {
   pay(
     @CurrentUser() user: { id: number },
     @Param('id', ParseIntPipe) id: number,
+    @Body() dto: PayBillDto,
     @IdempotencyKey() idemKey: string,
     @StepUpToken() stepUpToken?: string,
   ) {
     return this.bills.pay({
       payerId: user.id,
       billId: id,
+      amountPaisa: dto?.amount_paisa,
       idemKey,
       stepUpToken,
     });

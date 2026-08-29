@@ -51,8 +51,21 @@ export class LedgerWriterService implements LedgerWriterPort {
     const balanceById = new Map<number, number>(locked.rows.map((r) => [r.id, r.balance]));
     const senderBalance = balanceById.get(senderAccountId)!;
 
+    // Check for any open dispute holds on sender
+    const disputeHoldRes = await client.query(
+      `SELECT COALESCE(SUM(d.secured_amount), 0) AS dispute_holds
+       FROM ledger.disputes d
+       JOIN ledger.transactions t ON t.id = d.txn_id
+       WHERE t.receiver_id = $1 AND d.state = 'OPEN'`,
+      [senderId],
+    );
+    const disputeHolds = parseInt(disputeHoldRes.rows[0]?.dispute_holds ?? '0', 10);
+    const availableBalance = Math.max(0, senderBalance - disputeHolds);
+
     if (sender.status === 'FROZEN') throw new AccountFrozen();
-    if (senderBalance < amountPaisa) throw new InsufficientFunds(senderBalance, amountPaisa);
+    if (availableBalance < amountPaisa && kind !== 'REVERSAL') {
+      throw new InsufficientFunds(availableBalance, amountPaisa);
+    }
 
     if (!skipDailyLimitCheck) {
       const spentToday = await this.accounts.spentToday(client, senderAccountId);

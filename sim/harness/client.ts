@@ -105,6 +105,14 @@ export class ApiClient {
     return this.request('GET', '/auth/me', { token });
   }
 
+  totpSetup(token: string): Promise<ApiResult<{ secret: string; otpauth_url: string }>> {
+    return this.request('POST', '/auth/totp/setup', { token });
+  }
+
+  totpVerify(token: string, code: string): Promise<ApiResult<any>> {
+    return this.request('POST', '/auth/totp/verify', { token, json: { code } });
+  }
+
   stepUp(token: string, method: 'PIN' | 'TOTP', value: string): Promise<ApiResult<{ step_up_token: string; expires_in: number }>> {
     const body = method === 'PIN' ? { method, pin: value } : { method, code: value };
     return this.request('POST', '/auth/step-up', { token, json: body });
@@ -195,14 +203,29 @@ export class ApiClient {
     return this.request('GET', '/disputes', { token });
   }
 
-  createBill(token: string, title: string, shares: Array<{ phone: string; amount_paisa: number }>): Promise<ApiResult<any>> {
-    return this.request('POST', '/bills', { token, json: { title, shares } });
+  createBill(
+    token: string,
+    title: string,
+    shares: Array<{ phone: string; amount_paisa?: number }>,
+    opts?: { split_mode?: 'CUSTOM' | 'EQUAL'; total_amount_paisa?: number },
+  ): Promise<ApiResult<any>> {
+    const json: any = { title, shares };
+    if (opts?.split_mode) json.split_mode = opts.split_mode;
+    if (opts?.total_amount_paisa !== undefined) json.total_amount_paisa = opts.total_amount_paisa;
+    return this.request('POST', '/bills', { token, json });
   }
 
-  payBill(token: string, billId: number, idemKey: string, stepUpToken?: string): Promise<ApiResult<any>> {
+  payBill(
+    token: string,
+    billId: number,
+    idemKey: string,
+    stepUpToken?: string,
+    amountPaisa?: number,
+  ): Promise<ApiResult<any>> {
     const headers: Record<string, string> = { 'Idempotency-Key': idemKey };
     if (stepUpToken) headers['X-Step-Up-Token'] = stepUpToken;
-    return this.request('POST', `/bills/${billId}/pay`, { token, headers });
+    const json = amountPaisa !== undefined ? { amount_paisa: amountPaisa } : undefined;
+    return this.request('POST', `/bills/${billId}/pay`, { token, headers, json });
   }
 
   getBill(token: string, billId: number): Promise<ApiResult<any>> {
@@ -211,6 +234,29 @@ export class ApiClient {
 
   cancelBill(token: string, billId: number): Promise<ApiResult<any>> {
     return this.request('POST', `/bills/${billId}/cancel`, { token });
+  }
+
+  createGroupTransfer(
+    token: string,
+    items: Array<{ phone: string; amount_paisa: number }>,
+    opts?: { title?: string; idemKey?: string; stepUpToken?: string },
+  ): Promise<ApiResult<any>> {
+    const headers: Record<string, string> = {};
+    if (opts?.idemKey) headers['Idempotency-Key'] = opts.idemKey;
+    if (opts?.stepUpToken) headers['X-Step-Up-Token'] = opts.stepUpToken;
+    return this.request('POST', '/group-transfers', {
+      token,
+      headers,
+      json: { title: opts?.title, items },
+    });
+  }
+
+  myGroupTransfers(token: string): Promise<ApiResult<any>> {
+    return this.request('GET', '/group-transfers/mine', { token });
+  }
+
+  getGroupTransfer(token: string, batchId: number): Promise<ApiResult<any>> {
+    return this.request('GET', `/group-transfers/${batchId}`, { token });
   }
 
   // ---- reads ----

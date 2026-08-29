@@ -53,3 +53,9 @@ export class StepUpDto {
   @IsString()
   code?: string;
 }
+
+export class VerifyTotpDto {
+  @IsString()
+  @Matches(/^[0-9]{6}$/, { message: 'code must be a 6-digit number' })
+  code!: string;
+}

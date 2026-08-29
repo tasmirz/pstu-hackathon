@@ -23,6 +23,11 @@ export class AdminDisputesController {
     );
   }
 
+  @Get('recovery-cases')
+  listRecoveryCases(@Query('debtor_id') debtorId?: string) {
+    return this.disputes.listRecoveryCases(debtorId ? parseInt(debtorId, 10) : undefined);
+  }
+
   @Post(':id/resolve')
   @HttpCode(200)
   resolve(

@@ -127,44 +127,53 @@ export const DIS_06: Scenario = {
 
 export const DIS_07: Scenario = {
   id: 'DIS-07',
-  name: 'Admin REVERSE when receiver already spent it: 402, dispute stays OPEN, attempts incremented',
+  name: 'Receiver cannot spend secured dispute escrow; admin REVERSE succeeds from escrow',
   tags: ['disputes', 'dispute', 'tier2'],
   async run(ctx) {
     const [a, b, c, admin] = await ctx.freshUsers(4, 'DIS07');
     await ctx.makeAdmin(admin);
+    await ctx.adminPool.query(
+      `INSERT INTO ledger.limit_overrides (user_id, daily_send_limit, set_by, reason)
+       VALUES ($1, 1000000000, $1, 'simulator') ON CONFLICT (user_id) DO UPDATE SET daily_send_limit = 1000000000`,
+      [b.user.id],
+    );
     const amount = 300_000;
 
-    // a -> b, dispute, then b drains to c so the reversal cannot be covered.
+    // a -> b, then a disputes. B's funds are secured in dispute escrow.
     const txn = await ctx.transfer(a, b, amount);
     const txnId = txn.body.transaction.id;
     const dispute = await ctx.client.raiseDispute(a.access_token, txnId, 'wrong number');
     const disputeId = dispute.body.id;
+    ctx.expectEq(dispute.body.secured_amount, amount, 'full amount secured in escrow');
 
-    await ctx.adminPool.query(
-      `INSERT INTO ledger.limit_overrides (user_id, daily_send_limit, set_by, reason)
-       VALUES ($1, 1000000000, $1, 'simulator: DIS-07 drain') ON CONFLICT (user_id) DO UPDATE SET daily_send_limit = 1000000000`,
-      [b.user.id],
-    );
-    const bBal = await ctx.balance(b);
-    await ctx.transfer(b, c, bBal); // b spends everything
+    // B drains all available funds to C
+    const bBal = (await ctx.client.balance(b.access_token)).body;
+    const suB = await ctx.client.stepUp(b.access_token, 'PIN', b.pin);
+    await ctx.client.transfer(b.access_token, c.user.phone, bBal.available_paisa, {
+      idemKey: ctx.uuid(),
+      stepUpToken: suB.body.step_up_token,
+    });
 
+    // B attempts to spend additional money (the secured dispute escrow) -> 402 INSUFFICIENT_FUNDS
+    const spendAttempt = await ctx.client.transfer(b.access_token, c.user.phone, 10_000, {
+      idemKey: ctx.uuid(),
+      stepUpToken: suB.body.step_up_token,
+    });
+    ctx.expectEq(spendAttempt.status, 402, 'B cannot spend secured funds');
+
+    // Admin resolves REVERSE -> succeeds using the secured escrow funds
     const su = await ctx.client.stepUp(admin.access_token, 'PIN', admin.pin);
     const resolved = await ctx.client.resolveDispute(
       admin.access_token,
       disputeId,
       'REVERSE',
-      'Attempting refund',
+      'Refund from secured escrow',
       ctx.uuid(),
       su.body.step_up_token,
     );
-    ctx.expectEq(resolved.status, 402, 'reversal fails — receiver spent it');
-    ctx.expectEq(resolved.body.error, 'INSUFFICIENT_FUNDS', 'INSUFFICIENT_FUNDS');
-    ctx.expectEq(resolved.body.details.dispute_state, 'OPEN', 'dispute stays OPEN');
-    ctx.expectEq(resolved.body.details.attempts, 1, 'attempts incremented');
-
-    const { rows } = await ctx.adminPool.query(`SELECT state, attempts FROM ledger.disputes WHERE id = $1`, [disputeId]);
-    ctx.expectEq(rows[0].state, 'OPEN', 'DB dispute still OPEN');
-    ctx.expectEq(rows[0].attempts, 1, 'DB attempts incremented');
+    ctx.expectEq(resolved.status, 200, 'reversal from escrow succeeds');
+    ctx.expectEq(resolved.body.dispute.state, 'REVERSED', 'dispute state REVERSED');
+    ctx.expectEq(resolved.body.dispute.refunded_amount, amount, 'full amount refunded');
   },
 };
 
@@ -335,4 +344,115 @@ export const DIS_12: Scenario = {
   },
 };
 
-export const disputeScenarios: Scenario[] = [DIS_01, DIS_02, DIS_03, DIS_04, DIS_05, DIS_06, DIS_07, DIS_08, DIS_09, DIS_10, DIS_11, DIS_12];
+export const DIS_13: Scenario = {
+  id: 'DIS-13',
+  name: 'DM-02 flow: B spends part to C before dispute, partial refund to A, recovery case for deficit, B->C untouched',
+  tags: ['disputes', 'dispute', 'tier2'],
+  async run(ctx) {
+    const [a, b, c, admin] = await ctx.freshUsers(4, 'DIS13');
+    await ctx.makeAdmin(admin);
+    await ctx.adminPool.query(
+      `INSERT INTO ledger.limit_overrides (user_id, daily_send_limit, set_by, reason)
+       VALUES ($1, 1000000000, $1, 'simulator') ON CONFLICT (user_id) DO UPDATE SET daily_send_limit = 1000000000`,
+      [b.user.id],
+    );
+
+    // 1. A sends B ৳500 (50,000 paisa)
+    const txn = await ctx.transfer(a, b, 50_000);
+    const txnId = txn.body.transaction.id;
+    const aBalAfterSend = await ctx.balance(a);
+
+    // 2. B spends all available balance except 10,000 paisa to C *before* A disputes
+    const bBalBeforeDrain = await ctx.balance(b);
+    const drainAmount = bBalBeforeDrain - 10_000;
+    const suB = await ctx.client.stepUp(b.access_token, 'PIN', b.pin);
+    const bToC = await ctx.client.transfer(b.access_token, c.user.phone, drainAmount, {
+      idemKey: ctx.uuid(),
+      stepUpToken: suB.body.step_up_token,
+    });
+    ctx.expect(bToC.status < 300, 'B to C transfer succeeded');
+    const cBal = await ctx.balance(c);
+
+    // 3. A opens dispute. B has only 10,000 paisa available, so 10,000 is secured.
+    const dispute = await ctx.client.raiseDispute(a.access_token, txnId, 'Disputing original payment');
+    ctx.expectEq(dispute.status, 201, 'dispute created');
+    const disputeId = dispute.body.id;
+    ctx.expectEq(dispute.body.secured_amount, 10_000, '10,000 secured');
+
+    // 4. Admin resolves REVERSE.
+    const su = await ctx.client.stepUp(admin.access_token, 'PIN', admin.pin);
+    const resolved = await ctx.client.resolveDispute(
+      admin.access_token,
+      disputeId,
+      'REVERSE',
+      'Approved partial refund with recovery case',
+      ctx.uuid(),
+      su.body.step_up_token,
+    );
+    ctx.expectEq(resolved.status, 200, 'resolution accepted');
+    ctx.expectEq(resolved.body.dispute.state, 'REVERSED', 'dispute REVERSED');
+    ctx.expectEq(resolved.body.dispute.refunded_amount, 10_000, 'A refunded the secured 10,000');
+
+    // 5. Verify A received the 10,000 refund
+    const aBalFinal = await ctx.balance(a);
+    ctx.expectEq(aBalFinal, aBalAfterSend + 10_000, 'A received exactly the secured amount');
+
+    // 6. Verify B->C was completely untouched
+    ctx.expectEq(await ctx.balance(c), cBal, 'C balance completely untouched');
+
+    // 7. Verify recovery_cases row created for the deficit of 40,000
+    const recCases = await ctx.adminPool.query(
+      `SELECT * FROM ledger.recovery_cases WHERE dispute_id = $1`,
+      [disputeId],
+    );
+    ctx.expectEq(recCases.rows.length, 1, 'one recovery case created');
+    ctx.expectEq(recCases.rows[0].debtor_id, b.user.id, 'debtor is B');
+    ctx.expectEq(Number(recCases.rows[0].principal_amount), 40_000, 'principal deficit is 40,000');
+    ctx.expectEq(Number(recCases.rows[0].outstanding_amount), 40_000, 'outstanding deficit is 40,000');
+    ctx.expectEq(recCases.rows[0].state, 'OPEN', 'recovery state OPEN');
+  },
+};
+
+export const DIS_14: Scenario = {
+  id: 'DIS-14',
+  name: 'DM-03 race: B tries to spend while A opens dispute, common account lock ensures safe outcome',
+  tags: ['disputes', 'dispute', 'tier2'],
+  async run(ctx) {
+    const [a, b, c] = await ctx.freshUsers(3, 'DIS14');
+    const txn = await ctx.transfer(a, b, 30_000);
+    const txnId = txn.body.transaction.id;
+
+    // Both operations race for B's account lock
+    const [disputeRes, transferRes] = await Promise.all([
+      ctx.client.raiseDispute(a.access_token, txnId, 'Race test'),
+      ctx.client.transfer(b.access_token, c.user.phone, 30_000, { idemKey: ctx.uuid() }),
+    ]);
+
+    ctx.expectEq(disputeRes.status, 201, 'dispute opened');
+    // Either transfer succeeded and secured_amount is 0, OR transfer failed and secured_amount is 30,000
+    const bBal = await ctx.balance(b);
+    ctx.expect(bBal >= 0, 'B balance never negative');
+    const { rows } = await ctx.adminPool.query(`SELECT secured_amount FROM ledger.disputes WHERE id = $1`, [
+      disputeRes.body.id,
+    ]);
+    const secured = Number(rows[0].secured_amount);
+    ctx.expect([0, 30_000].includes(secured), 'secured amount is either 0 or 30000');
+  },
+};
+
+export const disputeScenarios: Scenario[] = [
+  DIS_01,
+  DIS_02,
+  DIS_03,
+  DIS_04,
+  DIS_05,
+  DIS_06,
+  DIS_07,
+  DIS_08,
+  DIS_09,
+  DIS_10,
+  DIS_11,
+  DIS_12,
+  DIS_13,
+  DIS_14,
+];

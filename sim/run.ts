@@ -19,6 +19,7 @@ import { limitsScenarios } from './scenarios/limits';
 import { billsScenarios } from './scenarios/bills';
 import { chaosScenarios } from './scenarios/chaos';
 import { notificationScenarios } from './scenarios/notifications';
+import { groupScenarios } from './scenarios/group';
 
 /**
  * CLI: `npm run sim -w sim -- [--only ID] [--tag TAG] [--json] [--reset] [--bail]`
@@ -63,6 +64,7 @@ const GROUPS: Record<string, Scenario[]> = {
   auth: authScenarios,
   limits: limitsScenarios,
   bills: billsScenarios,
+  group: groupScenarios,
   notifications: notificationScenarios,
   chaos: chaosScenarios,
 };

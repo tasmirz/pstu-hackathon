@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import {
   AccountLocked,
   AppError,
+  generateBase32Secret,
   LedgerIntegrityError,
   newTxnRef,
   sha256,
@@ -11,6 +12,7 @@ import {
   Unauthenticated,
   UserNotFound,
   ValidationError,
+  verifyTotp,
   withTransaction,
 } from '@pstu/shared';
 import bcrypt from 'bcryptjs';
@@ -267,7 +269,7 @@ export class AuthService {
 
   async me(userId: number) {
     const result = await this.pool.query(
-      `SELECT id, phone, name, status, (totp_secret IS NOT NULL) AS totp_enrolled
+      `SELECT id, phone, name, status, (totp_enabled IS TRUE) AS totp_enrolled
          FROM auth.users WHERE id = $1`,
       [userId],
     );
@@ -300,10 +302,72 @@ export class AuthService {
     });
   }
 
+  async totpSetup(userId: number) {
+    const userRes = await this.pool.query<{ id: number; phone: string; name: string }>(
+      `SELECT id, phone, name FROM auth.users WHERE id = $1`,
+      [userId],
+    );
+    const user = userRes.rows[0];
+    if (!user) throw new UserNotFound();
+
+    const secret = generateBase32Secret(20);
+    await this.pool.query(
+      `UPDATE auth.users SET totp_secret = $1 WHERE id = $2`,
+      [secret, userId],
+    );
+
+    const otpauthUrl = `otpauth://totp/PSTU:${encodeURIComponent(user.phone)}?secret=${secret}&issuer=PSTU`;
+
+    return {
+      secret,
+      otpauth_url: otpauthUrl,
+    };
+  }
+
+  async totpVerify(userId: number, code: string) {
+    const userRes = await this.pool.query<{ totp_secret: string | null }>(
+      `SELECT totp_secret FROM auth.users WHERE id = $1`,
+      [userId],
+    );
+    const user = userRes.rows[0];
+    if (!user || !user.totp_secret) {
+      throw new ValidationError('Please initiate TOTP setup first');
+    }
+
+    if (!verifyTotp(user.totp_secret, code)) {
+      throw new Unauthenticated('Invalid TOTP code');
+    }
+
+    await this.pool.query(
+      `UPDATE auth.users SET totp_enabled = true WHERE id = $1`,
+      [userId],
+    );
+
+    return {
+      success: true,
+      message: 'TOTP two-factor authentication enabled successfully',
+    };
+  }
+
   async stepUp(userId: number, dto: StepUpDto) {
     if (dto.method === 'TOTP') {
-      throw new AppError(501, 'NOT_IMPLEMENTED', 'TOTP step-up is not implemented');
+      const result = await this.pool.query<{ totp_secret: string | null; totp_enabled: boolean }>(
+        `SELECT totp_secret, totp_enabled FROM auth.users WHERE id = $1`,
+        [userId],
+      );
+      const user = result.rows[0];
+      if (!user || !user.totp_secret || !user.totp_enabled) {
+        throw new ValidationError('TOTP is not enrolled or enabled for this account');
+      }
+      if (!dto.code || !verifyTotp(user.totp_secret, dto.code)) {
+        throw new Unauthenticated('Invalid TOTP code');
+      }
+      return {
+        step_up_token: signStepUpToken(config.jwtPrivateKey, { sub: userId, method: 'TOTP' }),
+        expires_in: 120,
+      };
     }
+
     const result = await this.pool.query<{ pin_hash: string }>(
       `SELECT pin_hash FROM auth.users WHERE id = $1`,
       [userId],

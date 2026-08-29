@@ -6,6 +6,7 @@ import { QueryModule } from './modules/query/query.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { BillsModule } from './modules/ledger/bills/bills.module';
 import { DisputesModule } from './modules/ledger/disputes/disputes.module';
+import { GroupPaymentsModule } from './modules/ledger/group-payments/group-payments.module';
 import { RequestsModule } from './modules/ledger/requests/requests.module';
 import { ReversalsModule } from './modules/ledger/reversals/reversals.module';
 import { TransfersModule } from './modules/ledger/transfers/transfers.module';
@@ -21,6 +22,7 @@ import { TransfersModule } from './modules/ledger/transfers/transfers.module';
     DisputesModule,
     RequestsModule,
     BillsModule,
+    GroupPaymentsModule,
     AdminModule,
   ],
 })

@@ -92,10 +92,15 @@ export async function resetForCleanRun(adminPool: Pool): Promise<void> {
   const client = await adminPool.connect();
   try {
     await client.query('BEGIN');
+    await client.query(`DELETE FROM ledger.recovery_cases`);
+    await client.query(`DELETE FROM ledger.bill_payments`);
     await client.query(`DELETE FROM ledger.bill_shares`);
     await client.query(`DELETE FROM ledger.bills`);
+    await client.query(`DELETE FROM ledger.group_batch_items`);
+    await client.query(`DELETE FROM ledger.group_batches`);
     await client.query(`DELETE FROM ledger.disputes`);
     await client.query(`DELETE FROM ledger.money_requests`);
+    await client.query(`DELETE FROM notify.notifications`);
     await client.query(`DELETE FROM ledger.idempotency_keys`);
     await client.query(`DELETE FROM ledger.outbox`);
     await client.query(`DELETE FROM ledger.chain_checkpoints`);

@@ -11,6 +11,40 @@ design system "Kinetic Ledger" (`assets/da43ec6052af406ab60038e603948426`).
 
 ---
 
+## 2026-08-29 — Admin surfaces hidden from regular users (role gating)
+
+### What changed
+
+**Stitch** — Dashboard edited in place (`fdf0d88655ea46f4974f976d0f8b3b48`):
+removed the admin-only **"System Status"** sidebar link (it pointed at Ledger
+Integrity, an `/admin/*` surface). The regular-user sidebar is now Dashboard /
+History / Accounts / Settings / Support only. Confirmed via `get_screen` + the
+`edit_screens` DOM-op event (remove_element on `aside … a:nth-child(2)`).
+
+**`UI_SPEC.md`** — updated to match:
+- New **§0.5 Role gating** cross-cutting rule: admin surfaces (Ledger Integrity
+  §7, Admin Dispute Queue/Resolution §10, Admin Console §10) render only for
+  `role=ADMIN` — no nav link, no route, no hint; never greyed-out "admin only"
+  (the backend 403s anyway, VAL-12). Documented the exact leak found and fixed.
+- §7, §10 admin queue, §10 rest-of-console, and §1b reference table each carry an
+  **admin-only** note pointing at §0.5.
+
+### Why (worth keeping)
+
+A regular user must not even know an admin surface exists. The API refuses it
+with `403`; advertising it in the nav ("System Status" → Ledger Integrity) both
+teaches the user the surface exists and reads as a broken link on stage when the
+403 comes back. Gating is client-side visibility, not a security boundary — the
+boundary is the backend guard, and the sim (VALID-12) already proves it.
+
+### Verified
+
+- Dashboard confirmed via `get_screen`; DOM-op event confirms the link removal.
+- `git diff` shows only `UI_SPEC.md` + this build log changed (no backend /
+  frontend / sim files).
+
+---
+
 ## 2026-08-29 — Simulator board built + fixed to 80/80 green
 
 **Role note:** the sim work overlaps with what other agents (Claude/Codex/
@@ -54,9 +88,13 @@ several scenarios stale. Fixes:
 ```
 LEDGER 7/7 · HAPPY 6/6 · IDEMPOTENCY 6/6 · VALIDATION 14/14 · CONCURRENCY 7/7
 HOLD 5/5 · REVERSAL 4/4 · REQUESTS 7/7 · DISPUTE 12/12 · AUTH 4/4
-LIMITS 3/3 · BILLS 5/5 · CHAOS 3/3
-83 passed  0 failed  — Conservation held across all 83 scenarios.
+LIMITS 3/3 · BILLS 5/5 · NOTIFICATIONS 5/5 · CHAOS 3/3
+88 passed  0 failed  — Conservation held across all 88 scenarios.
 ```
+
+(The REQUESTS/DISPUTE/NOTIFICATIONS groups grew past DeepSeek's original set as
+other agents added REQ-06/07, DIS-12 and NOTIF-01..05 concurrently; all green
+as of the last run.)
 
 Run: `npm run sim -w sim` (API up via `npm run start -w apps/api`; infra via
 `docker compose up -d`). Add `--reset` for a clean board.

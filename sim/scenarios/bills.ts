@@ -149,5 +149,126 @@ export const BILL_05: Scenario = {
   },
 };
 
-export const billsScenarios: Scenario[] = [BILL_01, BILL_02, BILL_03, BILL_04, BILL_05];
+export const BILL_06: Scenario = {
+  id: 'BILL-06',
+  name: 'Equal split: 3 participants, 10,000 paisa -> 3334, 3333, 3333, sum exactly matches total',
+  tags: ['bills', 'bill', 'tier1'],
+  async run(ctx) {
+    const [creator, p1, p2, p3] = await ctx.freshUsers(4, 'BILL06');
+    const res = await ctx.client.createBill(
+      creator.access_token,
+      'Dinner Split 3-way',
+      [{ phone: p1.user.phone }, { phone: p2.user.phone }, { phone: p3.user.phone }],
+      { split_mode: 'EQUAL', total_amount_paisa: 10_000 },
+    );
+    ctx.expectEq(res.status, 201, 'equal split bill created');
+    ctx.expectEq(res.body.split_mode, 'EQUAL', 'split_mode is EQUAL');
+    ctx.expectEq(res.body.total_amount_paisa, 10_000, 'total is 10,000');
+    ctx.expectEq(res.body.shares.length, 3, 'three shares created');
+
+    const amounts = res.body.shares.map((s: any) => s.amount_paisa);
+    ctx.expectEq(amounts[0], 3334, 'first share gets remainder: 3334');
+    ctx.expectEq(amounts[1], 3333, 'second share: 3333');
+    ctx.expectEq(amounts[2], 3333, 'third share: 3333');
+    const sum = amounts.reduce((a: number, b: number) => a + b, 0);
+    ctx.expectEq(sum, 10_000, 'sum matches total perfectly');
+  },
+};
+
+export const BILL_07: Scenario = {
+  id: 'BILL-07',
+  name: 'Concurrent race to pay the last 50,000 paisa of a share: exactly one succeeds',
+  tags: ['bills', 'bill', 'concurrency', 'tier1'],
+  async run(ctx) {
+    const [creator, p1, p2] = await ctx.freshUsers(3, 'BILL07');
+    const bill = await ctx.client.createBill(creator.access_token, 'Race Share', [
+      { phone: p1.user.phone, amount_paisa: 50_000 },
+      { phone: p2.user.phone, amount_paisa: 50_000 },
+    ]);
+    const billId = bill.body.id;
+    const su = await ctx.client.stepUp(p1.access_token, 'PIN', p1.pin);
+
+    // Two parallel requests attempting to pay p1's share with different idempotency keys
+    const [r1, r2] = await Promise.all([
+      ctx.client.payBill(p1.access_token, billId, ctx.uuid(), su.body.step_up_token),
+      ctx.client.payBill(p1.access_token, billId, ctx.uuid(), su.body.step_up_token),
+    ]);
+
+    const statuses = [r1.status, r2.status].sort();
+    ctx.expectEq(statuses[0], 200, 'exactly one payment succeeded');
+    ctx.expectEq(statuses[1], 409, 'the other payment rejected with 409 INVALID_STATE');
+  },
+};
+
+export const BILL_08: Scenario = {
+  id: 'BILL-08',
+  name: 'Safe partial payment: pay 60% -> PARTIALLY_PAID, pay 40% -> PAID, bill auto-SETTLED',
+  tags: ['bills', 'bill', 'tier1'],
+  async run(ctx) {
+    const [creator, p1, p2] = await ctx.freshUsers(3, 'BILL08');
+    const beforeCreator = await ctx.balance(creator);
+    const beforeP1 = await ctx.balance(p1);
+
+    const bill = await ctx.client.createBill(creator.access_token, 'Installment Bill', [
+      { phone: p1.user.phone, amount_paisa: 100_000 },
+      { phone: p2.user.phone, amount_paisa: 100_000 },
+    ]);
+    const billId = bill.body.id;
+
+    // 1. P2 pays their share in full
+    const su2 = await ctx.client.stepUp(p2.access_token, 'PIN', p2.pin);
+    await ctx.client.payBill(p2.access_token, billId, ctx.uuid(), su2.body.step_up_token);
+
+    // 2. P1 pays 60% (60,000 paisa)
+    const su1 = await ctx.client.stepUp(p1.access_token, 'PIN', p1.pin);
+    const payPart1 = await ctx.client.payBill(
+      p1.access_token,
+      billId,
+      ctx.uuid(),
+      su1.body.step_up_token,
+      60_000,
+    );
+    ctx.expectEq(payPart1.status, 200, 'partial payment 60% ok');
+    ctx.expectEq(payPart1.body.share.state, 'PARTIALLY_PAID', 'share is PARTIALLY_PAID');
+    ctx.expectEq(payPart1.body.share.paid_amount_paisa, 60_000, 'paid is 60,000');
+    ctx.expectEq(payPart1.body.share.remaining_paisa, 40_000, 'remaining is 40,000');
+    ctx.expectEq(payPart1.body.bill.state, 'OPEN', 'bill still OPEN');
+    ctx.expectEq(await ctx.balance(p1), beforeP1 - 60_000, 'p1 debited 60,000');
+
+    // 3. P1 tries to overpay by paying 50,000 (when only 40,000 remains) -> rejected
+    const overpay = await ctx.client.payBill(
+      p1.access_token,
+      billId,
+      ctx.uuid(),
+      su1.body.step_up_token,
+      50_000,
+    );
+    ctx.expect([400, 422].includes(overpay.status), 'overpayment rejected');
+
+    // 4. P1 pays remaining 40,000 -> share becomes PAID, bill becomes SETTLED
+    const payPart2 = await ctx.client.payBill(
+      p1.access_token,
+      billId,
+      ctx.uuid(),
+      su1.body.step_up_token,
+      40_000,
+    );
+    ctx.expectEq(payPart2.status, 200, 'second payment 40% ok');
+    ctx.expectEq(payPart2.body.share.state, 'PAID', 'share is now PAID');
+    ctx.expectEq(payPart2.body.bill.state, 'SETTLED', 'bill is now SETTLED');
+    ctx.expectEq(await ctx.balance(p1), beforeP1 - 100_000, 'p1 debited full 100,000');
+    ctx.expectEq(await ctx.balance(creator), beforeCreator + 200_000, 'creator credited full total');
+  },
+};
+
+export const billsScenarios: Scenario[] = [
+  BILL_01,
+  BILL_02,
+  BILL_03,
+  BILL_04,
+  BILL_05,
+  BILL_06,
+  BILL_07,
+  BILL_08,
+];
 export const billScenarios: Scenario[] = billsScenarios;
