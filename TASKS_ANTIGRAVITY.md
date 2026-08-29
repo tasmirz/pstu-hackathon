@@ -1,26 +1,32 @@
-# Assignment: Antigravity — Round 5: `GET /money-requests/incoming` + `/outgoing`
+# Assignments: Antigravity
+
+## Round 5 — `GET /money-requests/incoming` + `/outgoing` (in progress / next up)
+
+If you haven't started this yet, do it first — it's still the more urgent
+gap (DeepSeek's Inbox/Outbox screens have nothing to bind to without it).
+Full brief below, unchanged. If it's already done and pushed, skip straight
+to **Round 6**.
 
 ## Rounds 1–4 — done, verified, thank you
 
 Disputes/Bill Payment/Shared Bill Payment (R1), HOLD/undo (R2), reputation
 step-up enforcement (R3), and full HTTP simulator coverage for your own
 modules — `sim/scenarios/dispute.ts` (11/11), `bills.ts` (5/5), `requests.ts`
-(5/5) (R4) — all verified live by Claude, `sim` is 68/81 clean on
-non-chaos groups with the remaining failures already triaged to Codex
-(concurrency/hold/reversal/limits scenario-vs-real-bug sweep, `TASKS_CODEX.md`
-Round 4 — **not your file this round, avoid touching
-`transfers.service.ts`/`reversals.service.ts` while they're mid-fix**).
+(5/5) (R4) — all verified live by Claude. Full non-chaos `sim` run is
+70/81; the remaining 11 (CONCURRENCY/HOLD/REVERSAL/LIMITS + one chaos
+timing test) are Codex's Round 4, actively in progress — **stay out of
+`transfers.service.ts` and `reversals.service.ts` until that lands**, same
+as last round.
 
 Also: Claude noticed `sim/scenarios/disputes.ts` (your R4 delivery) and the
 pre-existing `sim/scenarios/dispute.ts` both claimed ids `DIS-01..05` with
 different bodies — merged the one thing `disputes.ts` had that `dispute.ts`
-didn't (the reputation-drop check, now `DIS-12` in `dispute.ts`) and removed
-`disputes.ts`. Nothing for you to do about it, just flagging so the history
-makes sense if you go looking for that file.
+didn't (the reputation-drop check, now `DIS-12`) and removed `disputes.ts`.
+Nothing for you to do about it.
 
 ---
 
-## The gap this round closes
+## Round 5 (full brief)
 
 `API.md` documents two endpoints that were never actually built:
 
@@ -29,82 +35,124 @@ makes sense if you go looking for that file.
 > silently omitted — a request that vanishes from the list reads as a bug.
 
 `RequestsController` today only has `POST /`, `POST /:id/pay`, `/decline`,
-`/cancel`, `/remind` — there is no way to *list* your money requests at all.
-This isn't cosmetic: DeepSeek's already-designed **Money Requests
-Inbox/Outbox** screens (`BUILD_LOG_DEEPSEEK.md`) have nothing to bind to
-without it, and it's the one piece of the money-requests feature actually
-missing against spec.
-
-## What to build
-
-Two new routes on `RequestsController` (`apps/api/src/modules/ledger/requests/`):
+`/cancel`, `/remind` — there is no way to *list* your money requests at
+all. Build:
 
 - **`GET /money-requests/incoming?state=&limit=&cursor=`** — requests where
-  the caller is `payer_id` (money coming *to* them, i.e. they'd pay it).
+  the caller is `payer_id`.
 - **`GET /money-requests/outgoing?state=&limit=&cursor=`** — requests where
-  the caller is `requester_id` (money they're chasing).
+  the caller is `requester_id`.
 
 Same keyset-pagination shape as `GET /transactions`
-(`apps/api/src/modules/query/query.service.ts` — copy the `cursor`/`limit`/
-`next_cursor`/`has_more` pattern, id-descending). `state=` is an optional
-exact-match filter over `ledger.money_requests.state`
-(`PENDING`/`PAID`/`DECLINED`/`EXPIRED`/`CANCELLED`).
+(`apps/api/src/modules/query/query.service.ts`). `state=` is an optional
+exact-match filter over `ledger.money_requests.state`.
 
-**The lazy-expiry rule from `API.md` is the one part worth getting right**:
-a `PENDING` row past `expires_at` must come back as `state: "EXPIRED"` in
-the response — never omitted, and the DB row should actually flip to
-`EXPIRED` (not just be presented that way), consistent with
-`RequestsService.remind()`'s existing lazy-expiry check on read. Do this
-with one `UPDATE ... WHERE state = 'PENDING' AND expires_at <= now() ...
-RETURNING id` swept before the `SELECT` for the list (or a single
-`UPDATE ... RETURNING *` folded into the query) — same "CAS, not
-read-check-write" discipline as everywhere else, and it means a poller
-hitting this endpoint repeatedly is what actually keeps expiry current,
-no new cron/sweeper needed.
+**Lazy-expiry**: a `PENDING` row past `expires_at` must come back as
+`state: "EXPIRED"` — never omitted — and the DB row should actually flip
+(one `UPDATE ... WHERE state = 'PENDING' AND expires_at <= now() ...`
+swept before the list query), same as `RequestsService.remind()`'s
+existing lazy-expiry check.
 
-Response shape per item — mirror the create response's fields plus enough
-to render a list row:
 ```jsonc
 { "id": 77, "state": "PENDING", "amount_paisa": 120000, "note": "for the ticket",
   "counterparty": { "id": 43, "name": "Karim U.", "phone": "+8801798765432" },
   "expires_at": "...", "reminded_at": null, "settled_txn_id": null, "created_at": "..." }
 ```
-`counterparty` is the *other* party relative to which list it's in — the
-payer's name/phone on `incoming` isn't useful (that's the caller), so it's
-the requester's; symmetric on `outgoing`.
+`counterparty` is the *other* party — the requester's identity on
+`incoming`, the payer's on `outgoing`.
 
-## Ownership boundaries
+**Verify**: add `REQ-06`/`REQ-07` to `sim/scenarios/requests.ts` (create →
+both endpoints show it; manufacture an expired one via `ctx.adminPool` →
+both endpoints show `EXPIRED`, not omitted). Add
+`incomingRequests`/`outgoingRequests` to `sim/harness/client.ts` (pure
+additions, shouldn't conflict).
 
-**Yours**: `apps/api/src/modules/ledger/requests/requests.controller.ts`,
-`requests.service.ts` (both already yours). **Not yours right now**:
-`transfers.service.ts`, `reversals.service.ts` — Codex is actively fixing
-real bugs there this round (`TASKS_CODEX.md` R4); touching either risks a
-conflict on files that are mid-edit.
+---
 
-## Verifying your work
+## Round 6 — Notification writes (start once Round 5 is pushed)
 
-Add scenarios to `sim/scenarios/requests.ts` (already yours from R4) —
-**REQ-06**: create a request, `GET .../outgoing` shows it `PENDING` for the
-requester and `GET .../incoming` shows it for the payer; **REQ-07**:
-manufacture an expired one (`UPDATE ledger.money_requests SET expires_at =
-now() - interval '1 day'` via `ctx.adminPool`, same trick
-`RequestsService.remind()`'s own test already uses) and confirm it comes
-back `state: "EXPIRED"` on both endpoints, not omitted, and the DB row
-actually flipped. Add the two client methods to `sim/harness/client.ts`
-(`incomingRequests`/`outgoingRequests`, same shape as `client.transactions`)
-— that file's a shared resource but these are pure additions, not edits to
-existing methods, so should merge cleanly.
+### The feature
+
+`SCHEMA.sql` already has the full shape for this from the original
+3-service design — `ledger.outbox` (every `moveMoney` call already writes
+a row there) and `notify.notifications` — meant for a Kafka relay that
+drains the outbox into notifications. That relay isn't running (explicitly
+deferred, `TASKS_CLAUDE.md`). Rather than half-build a relay that talks to
+nothing, **write the notification row directly, in the same transaction as
+the ledger legs** — `moveMoney` is the one place every money movement
+already funnels through. This is honestly *more* consistent than the
+eventual relay (no redelivery window to dedupe), and it's the real
+backend counterpart to DeepSeek's Round 3 Notification-feed screen design —
+right now that screen has no data to bind to.
+
+Claude already granted the missing permission
+(`infra/sql/006_notifications_claude.sql` — `txn_svc` can now write
+`notify.notifications`; applied, no migration needed from you) and left a
+comment there explaining exactly when this insert should move to a relay
+instead (the day an external consumer — push notifications, Centrifugo —
+needs the Kafka hop too).
+
+### What to build
+
+**1. In `LedgerWriterService.moveMoney`** (`apps/api/src/modules/ledger/core/ledger-writer.service.ts`),
+right after the existing `ledger.outbox` insert, insert one or two rows
+into `notify.notifications` depending on `kind`:
+
+| `kind` | Notify | `kind` column | Title/body shape |
+|---|---|---|---|
+| `TRANSFER` | both parties | sender: `TXN_SENT`, receiver: `TXN_RECEIVED` | "Sent ৳X to {name}" / "Received ৳X from {name}" |
+| `HOLD_SETTLE` (sweeper) | receiver only | `TXN_RECEIVED` | same as above — the sender already got their `HELD` notice at send time |
+| `HOLD_CANCEL` | sender only | — (skip; it's their own undo, not news) | — |
+| `REQUEST_SETTLE` | requester only | `REQUEST_PAID` | "{payer name} paid your request for ৳X" |
+| `BILL_SHARE_SETTLE` | bill creator only | `REQUEST_PAID` (reuse — same shape, no need for a new kind) | "{payer name} paid their ৳X share of {bill title}" — title isn't available inside `moveMoney`; pass it through `note` the way `Cancel of {ref}` already does, or read the bill row if `parentTxnId`/context is already in scope where `BillsService.pay` calls `moveMoney` |
+| `REVERSAL` | both parties | `REVERSAL` | "Reversed: {original description}" — the row `sim/scenarios/happy.ts`... actually `dispute.ts` already asserts exists on the read side; this is its notification counterpart |
+| `SIGNUP_BONUS` | skip | — | registration already shows the balance immediately, a notification adds nothing |
+
+Don't invent new `notify.notifications.kind` values beyond the ones
+`SCHEMA.sql`'s comment already lists
+(`TXN_RECEIVED | TXN_SENT | REQUEST_NEW | REQUEST_PAID | REVERSAL |
+LIMIT_WARNING`) — `REQUEST_NEW` (a request being *created*, not paid) and
+`LIMIT_WARNING` (approaching the daily cap) both belong outside
+`moveMoney` (request creation moves no money; a limit warning isn't a
+transfer at all) — leave those two as a clearly-flagged follow-up in your
+build log rather than reaching for them here, since this round is
+specifically "hang notifications off the one function every money
+movement already goes through."
+
+**2. `GET /notifications?unread=&limit=&cursor=`** and
+**`POST /notifications/:id/read`** (or `/read-all`) — a small
+`NotificationsModule` in the query/read domain (`read_svc` already has
+full read/write on `notify.notifications` from `SCHEMA.sql`, no new grant
+needed). Same keyset pagination as everywhere else. This is a new module,
+so it needs one line in `app.module.ts` — flag it in your build log rather
+than editing that file yourself; Claude will wire it in (same rule as
+every module addition since Round 1).
+
+### Verify
+
+New `sim/scenarios/notifications.ts` — tag `notifications`: a transfer
+generates the sender's `TXN_SENT` and receiver's `TXN_RECEIVED`, a paid
+request generates the requester's `REQUEST_PAID`, marking one read flips
+`read_at` and it drops out of `?unread=true`. Universal invariants stay
+free from `runScenario` as always — this feature touches no balances.
 
 ```bash
 cd apps/api && npm run start:dev
-npm run sim -w sim -- --tag requests
+npm run sim -w sim -- --tag notifications
 ```
-Must stay 100% green, conservation held.
+
+## Ownership boundaries
+
+**Yours**: `ledger-writer.service.ts` (small, additive change — the
+existing outbox insert and everything above it stays untouched), a new
+`NotificationsModule` under `modules/notifications/` or similar,
+`sim/scenarios/notifications.ts`. **Not yours right now**:
+`transfers.service.ts`/`reversals.service.ts` (Codex, R4 in progress),
+`app.module.ts` (flag the new module for Claude to wire in).
 
 ## Explicitly out of scope
 
-TOTP, the Kafka outbox relay/consumers, the Centrifugo bridge, Redis
+TOTP, the Kafka outbox relay actually consuming `ledger.outbox` (this
+round's whole point is not needing it yet), the Centrifugo bridge, Redis
 caching, one-payer-many-payees split, load testing, chaos/Docker
-portability (Claude already fixed the compose-cwd bug in
-`sim/harness/chaos.ts`; CHA-01 stays a known-flaky timing test, not yours
-to chase). Don't build these unless Claude asks.
+portability. Don't build these unless Claude asks.

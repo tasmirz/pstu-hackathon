@@ -7,6 +7,42 @@ new entries go in **this** file. Newest entry on top.
 
 ---
 
+## 2026-08-29 — Re-checked Codex R4 (not landed yet), queued Antigravity Round 6: notification writes
+
+User asked to check whether Codex's Round 4 (CONCURRENCY/HOLD/REVERSAL/
+LIMITS fixes) had landed. Re-fetched `origin/main` (no new commits since
+my last push), confirmed no uncommitted local changes, rebuilt, restarted
+the server, and reran the full `sim` suite: **identical 11 failures**,
+byte-for-byte the same as before Round 4 was assigned. Asked the user
+directly rather than guessing — answer: leave Codex's Round 4 in place
+(still working on it), and give Antigravity additional work in the
+meantime.
+
+**New Round 6 for Antigravity, queued behind Round 5**: while re-reading
+`SCHEMA.sql` for something genuinely new and unclaimed, noticed
+`ledger.outbox` and `notify.notifications` already exist — full shape,
+built for the original 3-service design where a Kafka relay drains the
+outbox into notifications. That relay was explicitly deferred, but the
+tables were never dead weight: `moveMoney` already writes an outbox row on
+every call. Rather than have Antigravity half-build a relay that talks to
+a Kafka topic nobody consumes, the honest move is simpler and *more*
+consistent: write the `notify.notifications` row in the same transaction
+as the ledger legs, directly in `moveMoney` — no redelivery window to
+dedupe, and it's the actual backend counterpart to DeepSeek's Round 3
+Notification-feed screen design, which currently has no data to bind to.
+Documented in the task file exactly which `kind`s should notify whom, and
+explicitly told them not to reach for `REQUEST_NEW`/`LIMIT_WARNING` this
+round since those don't originate inside `moveMoney`.
+
+`SCHEMA.sql` only granted schema `notify` to `read_svc` — `txn_svc` had no
+access at all, so I wrote and applied `infra/sql/006_notifications_claude.sql`
+(`GRANT USAGE ON SCHEMA notify TO txn_svc; GRANT SELECT, INSERT ON
+notify.notifications ...`), with a comment explaining exactly when this
+insert should move to a real relay instead (the day an external consumer —
+push notifications, Centrifugo — needs the Kafka hop too). Verified via
+`scripts/apply-schema.js` — applies cleanly, idempotent like every other
+amendment.
+
 ## 2026-08-29 — Full sim sweep (68/81), deduped a dispute-scenario collision, fixed the chaos harness; Round 5 for Antigravity
 
 Pulled a burst of concurrent work: Antigravity's Round 4
