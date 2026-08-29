@@ -1,93 +1,62 @@
-# Assignment: Codex — Round 3: Sim Coverage for Your Own Modules (fast)
+# Assignment: Codex — Round 4: Simulator Reliability Sweep
 
-## Rounds 1 & 2 — done, verified, thank you
+## Previous rounds — complete
 
-Bootstrap, `AuthModule`, `QueryModule`, `AdminModule` (R1) and the
-`reputation` field on `GET /users/lookup` + `GET /admin/users/:id/reputation`
-(R2) both landed and were verified live by Claude — build clean, all
-routes mapped, `curl` against `/users/lookup` returns
-`reputation: { score, tier }` matching `ledger.v_user_reputation` exactly.
-Nothing here asks you to revisit that work.
+Bootstrap/Auth/Query/Admin, reputation reads, and Auth/Query validation
+coverage are merged and verified. `sim/scenarios/validation.ts` now combines
+DeepSeek's transfer validation (`VAL-01..08`) with Codex's Auth/Query/Admin
+coverage (`VAL-09..14`): **14/14 green, conservation held**.
 
----
+## Goal
 
-## The gap this round closes
+Turn the remaining non-chaos simulator groups green against a clean, current
+API build. Treat the simulator as a bug finder: determine whether each failure
+is a stale scenario assumption or a real application race/state bug before
+changing code.
 
-The `sim/` harness (Claude's track) now drives real HTTP against the app —
-`sim/scenarios/happy.ts` and `idempotency.ts` are 12/12 green through the
-actual controllers, guards, and step-up header parsing, for Transfers.
-Antigravity is doing the same for Disputes/Requests/Bills this round (their
-`TASKS_ANTIGRAVITY.md`). **Auth and Query — your modules — are the one
-piece nobody has exercised through real HTTP edge cases yet.** Everyone's
-been testing the happy path through them incidentally (every scenario
-calls `register`/`login` to get going), but the actual *validation* and
-*auth* behaviors — bad PIN, expired/reused refresh tokens, malformed
-requests, lookup misses, non-admin hitting an admin route — have no
-scenario coverage at all.
+### 1. Reproduce cleanly
 
-This is fast for the same reason Antigravity's round is: **all the client
-plumbing already exists** in `sim/harness/client.ts` —
-`register`/`login`/`refresh`/`logout`/`logoutAll`/`me`, `lookup`,
-`integrity`, `freeze`/`unfreeze`. You're writing scenario bodies only, in
-the shape `sim/scenarios/happy.ts` already demonstrates — read it first.
+- Start the current API on a dedicated port and point `SIM_API_BASE_URL` at it.
+- Run with `--reset` where isolation matters.
+- Run groups separately: `concurrency`, `hold`, `reversal`, and `limits`.
+- Record exact failing scenario IDs before editing.
 
-## What to build
+### 2. Fix scenario-contract drift
 
-One new file: `sim/scenarios/validation.ts` — tag `validation` (matches
-`SIMULATOR.md`'s `VAL` group).
+Known stale assumptions seen before the latest merge include:
 
-- **VAL-01**: `POST /auth/login` with a wrong PIN → assert the exact error
-  shape your `AuthModule` returns (check the code, don't guess) — this is
-  the one every wallet app gets subtly wrong (leaking whether the phone
-  exists vs. the PIN being wrong).
-- **VAL-02**: `POST /auth/refresh` with an already-used (rotated) refresh
-  token → `TokenReuseDetected` — this is a real security property worth
-  proving, not just documenting. If your refresh-rotation logic also
-  revokes the whole session family on reuse detection, assert that too
-  (a second legitimate refresh attempt with the *original* pre-rotation
-  token should now also fail).
-- **VAL-03**: `GET /users/lookup?phone=` for a phone that doesn't exist →
-  `404 USER_NOT_FOUND`.
-- **VAL-04**: `GET /admin/integrity` called by a non-admin token → `403`
-  (this exact case was smoke-tested manually by Claude during R1 — turning
-  it into a permanent scenario means it can't silently regress).
-- **VAL-05**: register with a phone that's already taken → whatever your
-  `AuthModule` actually returns (check first) — this is a validation path
-  nobody has driven since your own manual testing during R1.
-- **VAL-06** (bonus, only if time): `GET /users/lookup` reputation field —
-  cross-check the score in the HTTP response against
-  `SELECT reputation_score FROM ledger.v_user_reputation WHERE user_id = $1`
-  via `ctx.adminPool` for a freshly registered user, closing the loop on
-  your own R2 work with an actual scenario instead of a one-off `curl`.
+- first-time/low-reputation recipient checks requiring step-up before the
+  scenario reaches the state it intends to test;
+- held transfers returning `202` rather than immediate `201`;
+- controller success codes changing between `200` and `201`.
 
-Every scenario gets the universal invariant check for free from
-`runScenario` — don't re-check conservation/drift/negative yourself.
+Obtain a step-up token explicitly when a test is about a later rule. Accept
+multiple statuses only when the API contract genuinely permits both; do not
+weaken assertions just to make the board green.
 
-## Wiring in
+### 3. Diagnose real races
 
-Export `validationScenarios: Scenario[]` (same convention as
-`happyScenarios`). Claude will wire it into `sim/run.ts`'s `GROUPS` map
-once it lands — you don't need to touch `run.ts` (avoids a merge on the
-one shared file).
+Pay special attention to concurrent settle-vs-cancel and pay-vs-decline. If
+both mutually exclusive outcomes commit, fix the application with a CAS/state
+transition guard and add a precise regression assertion. Preserve double-entry
+and idempotency guarantees.
 
-## Ownership boundaries
+### 4. Verification
 
-**Yours (new)**: `sim/scenarios/validation.ts`. **Not yours**:
-`sim/run.ts` (Claude wires it in), `sim/harness/**` (already has
-everything you need — if something's genuinely missing on the client,
-flag it in your build log rather than editing `client.ts` yourself).
+- `npx tsc --noEmit -p sim/tsconfig.json`
+- API build clean.
+- Each assigned group 100% green.
+- Final combined non-chaos run reports conservation, zero drift, and zero
+  negative accounts.
 
-## Verifying your work
+## Ownership
 
-```bash
-cd apps/api && npm run start:dev     # server must be up, same as always
-npm run sim -w sim -- --tag validation
-```
-Must be 100% green with `Conservation held across all N scenarios.` in the
-summary line.
+You may edit the affected simulator scenarios and the smallest backend service
+needed for a proven bug. Do not redesign Disputes/Bills/Requests behavior that
+already matches `API.md`; Antigravity's completed work is the baseline.
 
-## Explicitly out of scope
+## Out of scope
 
-TOTP, the Kafka outbox relay/consumers, the Centrifugo bridge, Redis
-caching, one-payer-many-payees split, load testing. Don't build these
-unless Claude asks.
+Chaos/Docker portability is a separate follow-up. TOTP, Kafka consumers,
+Centrifugo, Redis caching, load testing, and new product features remain out of
+scope.

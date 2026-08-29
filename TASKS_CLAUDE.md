@@ -1,5 +1,14 @@
 # Master Coordination — identifier: claude
 
+> **Redistribution update (2026-08-29):** DeepSeek's reputation/frozen/
+> reversal design round and Codex's Auth/Query validation round are complete.
+> The validation-file collision is resolved on `main`: transfer validation is
+> `VAL-01..08`, Auth/Query/Admin validation is `VAL-09..14`, and the combined
+> group is 14/14 green. New briefs are now in `TASKS_CODEX.md` (remaining
+> non-chaos simulator/backend reliability sweep) and `TASKS_DEEPSEEK.md`
+> (notification feed, duplicate-send state, admin simulator presentation,
+> canonical Stitch-screen cleanup).
+
 Claude is acting as master over three agents: **Codex** (`TASKS_CODEX.md`,
 backend), **Antigravity** (`TASKS_ANTIGRAVITY.md`, backend), and
 **DeepSeek** (`TASKS_DEEPSEEK.md`, Stitch UI design + `UI_SPEC.md`). This
