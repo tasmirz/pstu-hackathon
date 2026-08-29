@@ -1,5 +1,15 @@
 # PSTU Hackathon — Money Movement App
 
+> **Status: kept for history.** Mid-contest, the three-service split below
+> was collapsed into one NestJS app (`apps/api`) behind the same
+> `AUTH_POOL`/`LEDGER_POOL`/`READ_POOL` role boundary, so the architecture
+> here is the *design intent*, not what's actually deployed. See the root
+> `README.md` for the real current architecture, and
+> `BUILD_LOG_CLAUDE.md`/`CLAUDE_BUILD_LOG.md` for why and exactly what
+> changed. The double-entry ledger, append-only enforcement, BIGINT-paisa
+> money, and three-role least-privilege boundary described below are all
+> still true today — only the process topology changed.
+
 **Services:** Auth Gateway · Txn Service · Read Service · Centrifugo · Redpanda · Redis · Postgres 16 + PgBouncer
 **Ledger:** double-entry, append-only, partitioned · **Money:** BIGINT paisa · **Writes:** synchronous · **Events:** outbox → Kafka
 

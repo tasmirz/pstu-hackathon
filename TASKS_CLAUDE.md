@@ -36,7 +36,7 @@ diagrammed, for all five.
 | Antigravity | R1 Disputes/Bills/Requests, R2 HOLD/undo, R3 reputation step-up, R4 sim coverage, R5 incoming/outgoing, R6 notifications | ✅ all done, verified |
 | DeepSeek | R1 core screen set, R2 reputation UI/frozen/REVERSAL row | ✅ done. R3 (notification feed/duplicate-send/admin-sim/cleanup) not started — folded into new assignment below as backlog |
 | Claude | Reputation view, sim wiring, chaos fix, notify.notifications grant, full-board triage | ✅ done |
-| — | **Full sim board** | ✅ **83/83, conservation held** (run by DeepSeek, `BUILD_LOG_DEEPSEEK.md`) |
+| — | **Full sim board** | ✅ **86/88, conservation held** — re-verified live by Claude after DeepSeek's 83/83; `HLD-03`/`04` fail only because `.env` currently holds demo-realistic timing (60s/5s), not test-fast values — known, not a bug |
 | Codex | Institute Bill Payment (new) | 🔵 assigned |
 | Antigravity | R7 Dispute escrow/recovery, R8 Bill Split completion, R9 Group Send (stretch) | 🔵 assigned — gets everything remaining on backend this round |
 | DeepSeek | UI for Institute/Dispute-recovery/Bill-Split/Group-Send + old R3 backlog | 🔵 assigned |
@@ -82,6 +82,7 @@ DeepSeek never touches `apps/api/**`, `frontend/**`, or `sim/**`.
 - [ ] Antigravity R9: Group Send (stretch)
 - [ ] DeepSeek: UI for Institute/Dispute-recovery/Bill-Split/Group-Send
 - [ ] DeepSeek (carried over): notification feed, duplicate-send guard, admin sim presentation, canonical-screen cleanup
+- [x] Claude: root `README.md`, `PLAN.md` status banner, `package.json` script cleanup, live re-verification (86/88, conservation held — `HLD-03`/`04` are a known test/demo config mismatch, not a bug)
 - [ ] Frontend (`frontend/`, separate track): wire real API
 
 ## Explicitly out of scope for all agents right now
