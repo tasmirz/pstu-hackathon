@@ -1,3 +1,19 @@
+> **STATUS UPDATE from master (Claude), checked 2026-08-29 ~13:20** — this
+> task has not landed yet (no `main.ts`, `app.module.ts`, `modules/auth`,
+> `modules/query`, or `modules/admin` exist on `main` as of commit
+> `df0dee5`). It is now the **single blocking item for the whole team**:
+> Antigravity's Disputes/Requests/Bills modules are done, self-verified
+> (`node scripts/test-antigravity.js` — all green, conservation holds), and
+> sitting unregistered because there's no `app.module.ts` to wire them into;
+> `AdminDisputesController` (Antigravity's) can't be mounted without your
+> `AdminModule`; and the frontend (`frontend/`, already scaffolded with
+> login/send/history/disputes/bills/admin pages) has nothing real to call.
+> **This is still your assignment, unchanged, just louder: please prioritize
+> §1 and §2 (bootstrap + AuthModule) above everything else in this file** —
+> §3/§4 (Query, admin integrity/freeze) matter but don't block anyone else
+> the way Auth does. Push early and often rather than batching everything
+> into one commit, so the rest of the team can integrate incrementally.
+
 # Assignment: Codex — Bootstrap, Auth, Query, Admin
 
 You are one of two agents working this backend in parallel, coordinated by
@@ -61,17 +77,18 @@ comments if you need to understand why `auth_svc` can touch `ledger` at all
 
 Nothing currently boots. Standard Nest bootstrap:
 `ValidationPipe({whitelist:true, transform:true})`, `AllExceptionsFilter`
-as a global filter, `app.enableCors()`, listen on `config.port`. Wire
-`DbModule` (already `@Global`) and every module that exists **at the time
-you write this** (`TransfersModule`, `ReversalsModule`, your own new
-modules below). **Do not wire Antigravity's modules yourself** — leave them
-out; Claude will add the two-line import once Antigravity reports done, to
-avoid both of you editing this file at once. Leave a one-line comment
-marking where those imports go:
-```ts
-// Antigravity's DisputesModule / RequestsModule / BillsModule are wired in
-// separately by the master once each is ready — see TASKS_CODEX.md.
-```
+as a global filter, `app.enableCors()`, listen on `config.port`.
+
+**Update from master**: Antigravity's track is done and verified
+(`node scripts/test-antigravity.js` passes end to end), so wire **all** of
+the following into `app.module.ts`'s `imports`, not just your own —
+there's no reason to hold these back now: `TransfersModule` and
+`ReversalsModule` (`../modules/ledger/transfers` / `.../reversals` — module
+files for these were missing and have been added by Claude, just import
+them), `DisputesModule`, `RequestsModule`, `BillsModule` (all three under
+`../modules/ledger/{disputes,requests,bills}`, built by Antigravity). Plus
+`DbModule` (already `@Global`, but list it for clarity) and whatever you
+build below (`AuthModule`, `QueryModule`, `AdminModule`).
 
 ### 2. `modules/auth/` — does not exist yet, build it
 
@@ -182,11 +199,15 @@ Use **`AUTH_POOL`** exclusively in this module (never `LEDGER_POOL` or
   to be atomic with the status flip; note this tradeoff in a comment if you
   want, don't over-engineer it).
 - **Create `modules/admin/admin.module.ts` with a controller named
-  `AdminIntegrityController`** (not a bare `AdminController`) — Antigravity
-  will add `AdminDisputesController` to the same module later without
-  touching your file. Register both controllers in `AdminModule`; whoever
-  finishes second adds the one-line array entry, or ask Claude to do it if
-  you're both done around the same time.
+  `AdminIntegrityController`** (not a bare `AdminController`). **Antigravity
+  already wrote `apps/api/src/modules/admin/admin-disputes.controller.ts`
+  (`AdminDisputesController`, needs `DisputesModule`'s `DisputesService`
+  injected) — it exists on disk right now, unregistered.** When you create
+  `AdminModule`, import `DisputesModule` (from
+  `../ledger/disputes/disputes.module.ts`, already built) and register
+  **both** `AdminIntegrityController` and the existing
+  `AdminDisputesController` in its `controllers` array — don't write a
+  second dispute-admin controller, the working one is already there.
 
 ---
 
