@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   Send,
   ArrowDownLeft,
+  Users,
   History,
   Scale,
   ShieldAlert,
@@ -13,6 +14,7 @@ import {
   LogOut,
   Sliders,
   CheckCircle2,
+  FileText,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 
@@ -23,8 +25,10 @@ export function Sidebar() {
   const navItems = [
     { label: 'Dashboard', href: '/', icon: LayoutDashboard },
     { label: 'Send Money', href: '/send', icon: Send },
-    { label: 'Money Requests', href: '/requests', icon: ArrowDownLeft },
+    { label: 'Bill Payment (1:1)', href: '/requests', icon: ArrowDownLeft },
+    { label: 'Shared Bills', href: '/bills', icon: Users },
     { label: 'Transaction History', href: '/history', icon: History },
+    { label: 'My Disputes', href: '/disputes', icon: ShieldAlert },
     { label: 'Limits & Velocity', href: '/limits', icon: Sliders },
   ];
 
