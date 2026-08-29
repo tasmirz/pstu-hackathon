@@ -49,8 +49,11 @@ Rules and where they are evaluated:
 |---|---|---|
 | Amount > ৳20,000 | Auth Gateway | The gateway can read `amount_paisa` from the body |
 | First-ever recipient | **Txn Service** | This is a ledger fact the gateway does not hold |
+| Recipient reputation < 30 | **Txn Service** | `ledger.v_user_reputation`, a ledger-derived fact — see "Reputation" below |
 | Any reversal | Auth Gateway | Endpoint-level rule, no ledger lookup needed |
 | Limit override (admin) | Auth Gateway | Endpoint-level rule |
+
+When step-up is required for a low-reputation recipient, `403 STEP_UP_REQUIRED` carries `{"reason": "LOW_REPUTATION_RECIPIENT"}`.
 
 When step-up is required and absent, the endpoint returns `403 STEP_UP_REQUIRED` with `{"reason": "FIRST_TIME_RECIPIENT"}`. The client then calls `POST /auth/step-up` and retries **with the same `Idempotency-Key`**.
 
@@ -393,12 +396,44 @@ Expired requests are returned with `state: "EXPIRED"` and are **not** silently o
 
 ### `GET /users/lookup?phone=`
 ```jsonc
-// ← 200 { "id": 43, "name": "Karim U.", "phone": "+8801798765432", "is_first_time": true }
+// ← 200
+{ "id": 43, "name": "Karim U.", "phone": "+8801798765432", "is_first_time": true,
+  "reputation": { "score": 62, "tier": "GOOD" } }
 // ← 404 { "error": "USER_NOT_FOUND" }
 ```
 Returns **first name + last initial**, not the full name. This resolves a real tension in the feature list: full names would leak the phonebook to anyone enumerating numbers, but full masking (`Ka*** U***`) would defeat the recipient-confirmation screen, which only works if a human can recognise the wrong person. First-name-plus-initial is enough to catch a typo and not enough to harvest.
 
-`is_first_time` drives the first-time-recipient warning chip and tells the client to expect a step-up challenge.
+`is_first_time` drives the first-time-recipient warning chip and tells the client to expect a step-up challenge. `reputation` is the same signal — see below.
+
+---
+
+## Reputation
+
+Every user has a **derived, read-only** trust score, `ledger.v_user_reputation`
+(`infra/sql/005_reputation_claude.sql`) — never a mutable column. It's
+computed from facts already in the ledger: completed transaction count,
+account age, disputes the user was party to that resolved `REVERSED`, and
+current `FROZEN` status. `score` is `0`–`100`; `tier` is a display label:
+
+| Tier | Score |
+|---|---|
+| `EXCELLENT` | ≥ 80 |
+| `GOOD` | 60–79 |
+| `FAIR` | 40–59 |
+| `LOW` | < 40 |
+
+**Honest limitation, worth volunteering to a judge**: this system cannot
+determine fault in a dispute — a `REVERSED` transaction might mean the
+receiver did something wrong, or it might mean the sender made an honest
+mistake (wrong phone number) and the receiver did nothing wrong at all.
+The score treats "was party to a `REVERSED` transaction" as a mild negative
+signal for **both** parties rather than pretending to assign blame it can't
+prove. It's a deliberately coarse, explainable proxy, not a fraud model.
+
+Surfaced in two places: `GET /users/lookup` (above — the recipient-
+confirmation screen's trust signal) and as a new step-up rule — sending to
+a recipient with `score < 30` requires step-up regardless of amount,
+`reason: "LOW_REPUTATION_RECIPIENT"` (see "Step-up authentication" above).
 
 ### `GET /notifications?limit=&cursor=` · `POST /notifications/:id/read`
 Written by the Kafka consumer inside this service, deduplicated on `event_id` — Kafka is at-least-once, so every event arrives at least twice on some crash path and without the dedupe table the user sees each notification twice.

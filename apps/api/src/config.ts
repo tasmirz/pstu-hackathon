@@ -44,6 +44,12 @@ export const config = {
 
   disputeWindowDays: Number(process.env.DISPUTE_WINDOW_DAYS || 7),
 
+  // Below this score, sending money requires step-up regardless of amount
+  // (API.md "Reputation" — reason LOW_REPUTATION_RECIPIENT). See
+  // ledger.v_user_reputation (infra/sql/005_reputation_claude.sql) for the
+  // score formula — 0-100, this is the single threshold consumers apply.
+  reputationStepUpThreshold: Number(process.env.REPUTATION_STEP_UP_THRESHOLD || 30),
+
   centrifugoTokenSecret: process.env.CENTRIFUGO_TOKEN_SECRET || 'changeme_centrifugo_secret',
   centrifugoWsUrl: process.env.CENTRIFUGO_WS_URL || 'ws://localhost:8000/connection/websocket',
 };

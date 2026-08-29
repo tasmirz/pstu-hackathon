@@ -108,3 +108,52 @@ transfers (plain + HOLD/undo), reversals, disputes (+ admin resolve),
 money requests, shared bills, and admin integrity all work over real HTTP
 against the real ledger, with conservation holding throughout. Remaining
 open items tracked in `TASKS_CLAUDE.md`'s checklist.
+
+## New feature: Reputation, and redistributing all three agents
+
+Per the user: add a reputation system for user accounts, then give all
+three agents (Codex, Antigravity, and DeepSeek — read `BUILD_LOG_DEEPSEEK.md`
+first) a new round of tasks.
+
+Design: a **derived, read-only** score, never a mutable column — same
+reasoning already used for why `accounts.balance` is a cache and
+`ledger.entries` is the truth, applied to a new kind of derived fact.
+`ledger.v_user_reputation` (`infra/sql/005_reputation_claude.sql`):
+base 50, + up to 30 for completed-transaction experience, + up to 10 for
+account tenure, − 15 per `REVERSED` dispute either side of the transaction
+was party to, − 40 while `FROZEN`, clamped to `0`–100`. Documented the
+honest limitation directly in the SQL comment and in `API.md`: this system
+cannot determine fault in a dispute (a reversal might be the receiver's
+fault, or an honest mistake by the sender), so the penalty lands on both
+parties to a reversed transaction rather than pretending to know who was
+at fault. Verified against live data — users with `REVERSED` disputes
+against them score visibly lower (36–37) than clean accounts (50–51).
+
+Granted `SELECT` to both `read_svc` and `txn_svc` — the read side (Codex's
+`QueryModule`) and the new enforcement rule (Antigravity's ledger write
+path) both need it, no new grant story beyond the existing view pattern.
+Added `config.reputationStepUpThreshold` (default 30) and a new step-up
+reason, `LOW_REPUTATION_RECIPIENT`, documented in `API.md`'s step-up rules
+table next to the existing first-time-recipient rule it sits beside in the
+code. Updated `UI_SPEC.md` §4 step 1 with the reputation dot in the lookup
+result row and the `LOW`-tier unconditional-step-up case at step 2.
+
+Split three ways, same seam every other feature has used: **Codex**
+exposes the read (`GET /users/lookup` gains `reputation: {score, tier}`),
+**Antigravity** adds the enforcement (the step-up check itself, in
+`TransfersService`/`BillsService`/`RequestsService`, right next to their
+existing amount-threshold checks), **DeepSeek** designs the UI (a compact
+indicator that doesn't outrank the recipient's name, applied everywhere a
+phone lookup already resolves a name, plus a new step-up copy variant for
+the `LOW`-tier case). Zero file overlap between the three by construction —
+DeepSeek's track has never touched backend code, and Codex/Antigravity's
+new work is in the same disjoint files their previous rounds already
+established (`modules/query/**` vs `modules/ledger/{transfers,bills,requests}/**`).
+
+Also gave DeepSeek two backlog items from their own "not yet designed"
+list (noted in their last log entry): the frozen-account Dashboard banner
+state, and the `REVERSAL` row style in Transaction History — both cheap,
+both real UI_SPEC gaps, both unclaimed by anyone else.
+
+Rewrote `TASKS_CLAUDE.md` to track all three agents across all rounds so
+far, with the new reputation-round assignments at the top.

@@ -171,7 +171,7 @@ Each step is its own screen or modal. **Never collapse them into one form.** The
 ```
 To      [ +8801798765432                    ]
         → debounced GET /users/lookup?phone=
-        → resolves to:  ✓ Karim U.
+        → resolves to:  ✓ Karim U.  ● Good           ← reputation dot + tier label
                         ⚠ First time sending to this number
         → or:           ✗ No user found
 
@@ -182,6 +182,7 @@ Amount  [ ৳ 0.00 ]        Note  [ optional ]
 
 - Lookup returns **first name + last initial** (`Karim U.`) — enough to catch a typo, not enough to harvest a phonebook. See `API.md`.
 - `is_first_time: true` → warning chip, and expect a step-up challenge at step 2.
+- **Reputation dot** — from `reputation.tier` in the same lookup response: `EXCELLENT`/`GOOD` green, `FAIR` amber, `LOW` red with the label *"Low trust — extra verification required"*. `score < 30` (`LOW`) means step-up is coming at step 2 regardless of amount (`reason: LOW_REPUTATION_RECIPIENT`) — same inline step-up pattern as the amount-threshold and first-time-recipient cases, not a separate flow. **Never block sending outright on a low score** — it's a signal for the human to weigh, not a ban; the system already has step-up for exactly this reason. State this plainly if asked: reputation informs, it doesn't gate.
 - Self-transfer: reject client-side immediately on own phone number, inline message. The backend rejects it too; this just saves a round trip.
 - Amount: numeric keypad on mobile, currency-formatted, converted to integer paisa on submit. **No float ever touches the network.**
 
