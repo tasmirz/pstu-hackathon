@@ -63,25 +63,25 @@ Map the backend's `error` code to one plain sentence each. Never show a raw code
 
 | # | Screen | P | Notes |
 |---|---|---|---|
-| 1 | Login / Register | **P0** | |
-| 2 | Dashboard | **P0** | live balance |
-| 3 | Send Money (3 steps) | **P0** | the centerpiece flow |
-| 4 | Transaction History | **P0** | keyset paginated |
-| 5 | Transaction Detail | **P0** | shows both ledger legs |
-| 6 | Ledger Integrity | **P0** | *UI that sells the backend* |
-| 7 | Request Money — create | **P1** | Stitch screen **Request Money - Step 1** (designed) |
-| 8 | Request inbox / outbox | **P1** | |
-| 9 | Undo countdown | **P1** | only if the backend HELD flow shipped |
-| 10 | Reversal / raise dispute | **P1** | |
-| 10b | My Disputes | **P1** | tracking list — a dispute must never silently disappear |
-| 10c | Admin dispute queue | **P1** | the only screen where an admin moves money |
-| 11 | Limits & velocity display | **P1** | |
+| 1 | Login / Register | **P0** | Stitch: **Login / Register** |
+| 2 | Dashboard | **P0** | live balance; Stitch: **Dashboard** + HOLD undo bar (added) |
+| 3 | Send Money (3 steps) | **P0** | the centerpiece flow; Stitch: **Send Money - Step 1 / Step 2 / Step 3 (Result)** |
+| 4 | Transaction History | **P0** | keyset paginated; Stitch: **Transaction History** |
+| 5 | Transaction Detail | **P0** | shows both ledger legs; Stitch: **Transaction Detail** |
+| 6 | Ledger Integrity | **P0** | *UI that sells the backend*; Stitch: **Ledger Integrity** |
+| 7 | Request Money — create | **P1** | Stitch: **Request Money - Step 1** |
+| 8 | Request inbox / outbox | **P1** | Stitch: **Money Requests - Inbox & Outbox** |
+| 9 | Undo countdown | **P1** | only if the backend HELD flow shipped; Stitch: undo bar on **Dashboard** |
+| 10 | Reversal / raise dispute | **P1** | Stitch: **Report a Dispute** |
+| 10b | My Disputes | **P1** | tracking list — a dispute must never silently disappear; Stitch: **My Disputes** |
+| 10c | Admin dispute queue | **P1** | the only screen where an admin moves money; Stitch: **Admin Dispute Queue / Admin Dispute Resolution** |
+| 11 | Limits & velocity display | **P1** | Stitch: **Limits & Velocity** |
 | 12 | Notification feed | **P2** | |
 | 13 | TOTP enrolment | **P2** | only if backend TOTP shipped |
-| 14 | Admin console | **P2** | integrity page already covers the demo |
+| 14 | Admin console | **P2** | integrity page already covers the demo; Stitch: **Admin Console & Health Monitor** |
 | 15 | Bill Payment — pay a fixed request | **P1** | this is the Money Requests flow (§8), "Bill Payment" is the product name for it |
-| 16 | Shared Bill — create | **P1** | new feature, §12 |
-| 17 | Shared Bill — detail / status board | **P1** | new feature, §12 |
+| 16 | Shared Bill — create | **P1** | new feature, §12; Stitch: **Create a Bill** |
+| 17 | Shared Bill — detail / status board | **P1** | new feature, §12; Stitch: **Shared Bill - Detail** |
 | 18 | Shared Bill — pay my share | **P1** | new feature, §12 — settles from the payer's normal account, same as Send |
 
 ```
@@ -93,6 +93,25 @@ Login ──▶ Dashboard ─┬─▶ Send (3 steps) ──▶ result ──▶
                      ├─▶ Notifications
                      └─▶ Ledger Integrity   (direct link, not in main nav)
 ```
+
+---
+
+## 1b. Stitch design reference — screens already designed
+
+All screens below exist in the Stitch project **"Ledger Flow Money Movement"** (`12103859305734439630`), built on the **Kinetic Ledger** design system (designMd in-project). Wire the frontend to match these mocks rather than inventing new layouts:
+
+| Stitch screen | UI_SPEC § |
+|---|---|
+| Login / Register | §2 |
+| Dashboard (+ HOLD undo bar) | §3, §9 |
+| Send Money - Step 1 · Step 2 · Step 3 (Result) | §4 |
+| Transaction History · Transaction Detail | §5, §6 |
+| Report a Dispute · My Disputes | §6b, §6c |
+| Ledger Integrity | §7 |
+| Request Money - Step 1 · Money Requests - Inbox & Outbox | §8 |
+| Limits & Velocity | §10 |
+| Admin Dispute Queue · Admin Dispute Resolution · Admin Console & Health Monitor | §10 |
+| Create a Bill · Shared Bill - Detail | §11 |
 
 ---
 
@@ -189,6 +208,8 @@ Amount  [ ৳ 0.00 ]        Note  [ optional ]
 - Step-up appears **inline on this screen**, never as a separate page. Don't make the user lose their place mid-transfer.
 
 ### Step 3 — Result
+
+**Designed in Stitch** as *Send Money - Step 3 (Result)* (project `12103859305734439630`): green-check success card with the amount in large monospace, transaction ref + new balance, a muted auto-return note, and the subtle *"Large transfers can be undone for 60 seconds"* line.
 
 - `201` → success screen with the new balance (taken from `balance_paisa` in the response, **not** a refetch), auto-route to Dashboard after ~2s or on tap.
 - `202` + `state: HELD` → success screen showing *"Sending in 60s — you can still cancel"* and the undo bar appears on Dashboard.
@@ -292,6 +313,9 @@ closed, but still handle the 422 if it races).
 `GET /disputes` — every dispute the current user has raised, regardless of
 state. **Never filter out resolved ones** — a dispute that vanishes from the
 list reads as a bug, the exact same principle as expired money requests (§8).
+**Designed in Stitch** as *My Disputes* (project `12103859305734439630`): OPEN /
+REVERSED / REJECTED cards, the admin's `resolution` text in tinted strips, and a
+`View txn` action per row.
 
 ```
 ┌────────────────────────────────────────┐
@@ -361,7 +385,7 @@ Amount        [ ৳ 0.00 ]     Note [ optional ]
                                     [ Send Request ]
 ```
 
-**Inbox** (`state=PENDING`, you are the payer):
+**Inbox** (`state=PENDING`, you are the payer). **Designed in Stitch** as *Money Requests - Inbox & Outbox* (project `12103859305734439630`): Incoming/Outgoing tabs, active rows with **Decline** + **Pay** and a "22h left" countdown caption, expired rows greyed with no buttons, and a note strip pointing to the Outgoing tab's Cancel action.
 ```
 ┌────────────────────────────────────────┐
 │  Alam H. requests ৳1,200.00             │
@@ -379,7 +403,7 @@ Amount        [ ৳ 0.00 ]     Note [ optional ]
 
 ## 9. Undo Countdown — **P1** — *build only if the backend HELD flow shipped*
 
-Persistent bar on Dashboard while any transfer is `HELD`:
+Persistent bar on Dashboard while any transfer is `HELD`. **Designed in Stitch** — added to the Dashboard screen (project `12103859305734439630`): a subtle `surface-container-low` bar between the action buttons and Recent Activity, clock icon, `৳10,000.00 to Karim U. · sending in 47s` (monospace amount), small primary **Undo** link.
 
 ```
 ⏱  ৳10,000.00 to Karim U. · sending in 47s          [ Undo ]
@@ -393,7 +417,7 @@ Persistent bar on Dashboard while any transfer is `HELD`:
 
 ## 10. Smaller screens
 
-**Limits & velocity (P1)** — the Dashboard line plus a small breakdown on tap: daily limit, spent today, remaining, reset time. On `VELOCITY_EXCEEDED`, an inline PIN prompt on the send screen, not a separate page.
+**Limits & velocity (P1)** — the Dashboard line plus a small breakdown on tap: daily limit, spent today, remaining, reset time. On `VELOCITY_EXCEEDED`, an inline PIN prompt on the send screen, not a separate page. **Designed in Stitch** as *Limits & Velocity* (project `12103859305734439630`): a "Spent today" progress card (৳4,750 / ৳50,000, flat indigo bar, reset-at-midnight caption) plus a velocity card ("3 of 10 allowed per minute") and the *"Receiving is never capped"* note strip.
 
 **Notification feed (P2)** — `GET /notifications`, unread dot on Dashboard, tap-to-read. Fed by the Kafka consumer, so it also serves as visible proof the event pipeline works.
 
@@ -439,6 +463,7 @@ every piece here is a recombination of those two, not new mechanics.
 
 ### Create
 
+**Designed in Stitch** as *Create a Bill* (project `12103859305734439630`): bill-title input, per-row phone + share amount with resolved-recipient chips and remove buttons, "＋ Add another person", computed **Total ৳800.00**, the *"Creating a bill moves no money"* consent strip, and the full-width **Create Bill** button.
 ```
 Bill title    [ Dinner at Kacchi Bhai              ]
 
@@ -463,6 +488,7 @@ Total: ৳800.00                        [ Create Bill ]
 
 ### Detail / status board
 
+**Designed in Stitch** as *Shared Bill - Detail* (project `12103859305734439630`): OPEN chip, ৳800.00 total, share rows with PAID/PENDING chips, "2 of 2 shares", the *"The bill settles the moment every share is paid"* note, and a full-width **Pay My Share ৳400.00** primary button plus a secondary **Cancel bill**.
 ```
 ┌────────────────────────────────────────┐
 │  Dinner at Kacchi Bhai            OPEN  │
