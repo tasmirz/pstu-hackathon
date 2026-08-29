@@ -123,3 +123,11 @@ export function makeContext(adminPool: Pool, txnSvcPool: Pool): ScenarioContext 
 
   return ctx;
 }
+
+export interface Scenario {
+  id: string;
+  name: string;
+  tags: string[];
+  requiresApi?: boolean;
+  run(ctx: ScenarioContext): Promise<void>;
+}

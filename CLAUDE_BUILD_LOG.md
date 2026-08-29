@@ -7,6 +7,85 @@ new entries go in **this** file. Newest entry on top.
 
 ---
 
+## 2026-08-29 — Verified Codex R2 + Antigravity R3 live; wired sim's HTTP groups; found 3 real bugs (in the scenarios, not the app); new fast round for Codex + Antigravity
+
+Both agents delivered the reputation round to `origin/main` (Codex's
+Round 2 landed as commit `96c3106` — `query.service.ts` gains the
+`reputation` field via a small `reputationTier()` helper in
+`modules/query/reputation.ts`, plus a P2
+`GET /admin/users/:id/reputation`; Antigravity's Round 3 landed as
+`84d78a4` — the `LOW_REPUTATION_RECIPIENT` check added to
+`TransfersService`/`RequestsService`/`BillsService`, exactly the pattern
+specified). Verified both for real before touching anything else:
+
+- `npx nest build` clean.
+- Booted the app locally, confirmed `GET /admin/users/:id/reputation`
+  is mapped and `GET /users/lookup` returns `reputation: { score, tier }`
+  matching `ledger.v_user_reputation` directly.
+- Ran `scripts/test-antigravity-round3.js` live: normal/low-reputation
+  recipients on Transfers, Requests, and Bills all behave correctly
+  (403 without step-up, 201 with it), conservation/drift/negative clean
+  throughout — **8/8 green**.
+
+Antigravity had also (unprompted, but useful and disjoint) started on the
+simulator's HTTP layer — `sim/harness/client.ts` (a full typed client
+against every endpoint in `API.md`) plus `sim/scenarios/happy.ts` and
+`idempotency.ts` — landed in the same push. This is exactly the piece
+`CLAUDE_BUILD_LOG.md`'s previous entry flagged as blocked on "Codex's
+bootstrap being confirmed up," which it now is, so picking it up was the
+right call. It wasn't wired into `sim/run.ts` yet — did that (`GROUPS` now
+has `ledger`/`happy`/`idempotency`), then ran the whole suite for the
+first time against the live server:
+
+```
+LEDGER   7/7  HAPPY  5/6 FAIL  IDEMPOTENCY  4/6 FAIL
+```
+
+Three real failures, and this is the simulator doing exactly its job —
+each one traced to a genuine scenario bug, not an app bug, and each one
+is evidence a feature built this session is working *correctly*:
+
+- **HAP-05** (request-then-pay) had the requester/payer roles backwards —
+  `POST /money-requests` is created by the person who gets paid
+  (`from_phone` names the payer, per `API.md`), and the scenario had it
+  swapped. Fixed the call direction.
+- **IDEM-04** (per-user idempotency-key scoping) had user B sending to a
+  recipient they'd never paid before, without accounting for the
+  `FIRST_TIME_RECIPIENT` step-up rule — a 403 that's correct, not a bug.
+  Switched to `ctx.transfer` (auto-retries with the PIN step-up) instead
+  of the raw client call, same as every other leg in the file.
+- **IDEM-06** (step-up-then-retry, one debit) used an amount above
+  `config.undoThresholdPaisa`, so a successful retry correctly lands as
+  `202` (`HELD`, Antigravity's Round 2 feature) rather than `201`
+  (`COMPLETED`) — the scenario was written assuming immediate settlement.
+  Fixed the assertion to accept either status, since the actual property
+  under test (exactly one debit) holds regardless.
+
+Also deleted a leftover placeholder assertion in IDEM-04
+(`expectEq(x, x ? x : x, ...)` — always true, said nothing) and replaced
+it with an actual balance check. Re-ran: **19/19, 0 failed, conservation
+held across all 19 scenarios.**
+
+**New fast round for Codex and Antigravity**, same shape both times: write
+scenario files against `sim/harness/client.ts`, which already has every
+method either of them needs — no new endpoints, no shared-file
+contention, genuinely quick. The gap being closed: every verification of
+Disputes/Requests/Bills so far (Antigravity's own scripts) calls the
+service classes directly, bypassing the controller layer entirely — the
+guards, step-up header parsing, and DTO validation for those three modules
+have never actually run. Antigravity gets `sim/scenarios/disputes.ts` +
+`bills.ts` (their own modules, over real HTTP, for the first time). Codex
+gets the mirror image for their own modules: `sim/scenarios/validation.ts`
+— Auth/Query edge cases (bad PIN, refresh-token reuse, 404 lookup,
+non-admin hitting `/admin/integrity`, duplicate registration) that nobody
+has scenario-covered, only smoke-tested by hand. Both told explicitly not
+to touch `sim/run.ts` — Claude wires each group in once it lands, keeping
+that one shared file conflict-free the same way it's stayed conflict-free
+all session.
+
+Updated `TASKS_CLAUDE.md`'s status table, assignments, and checklist to
+match current reality.
+
 ## 2026-08-29 — Simulator: starting the harness (not assigned to Codex or Antigravity)
 
 Per the user: keep working, but only on what isn't already someone else's

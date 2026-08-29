@@ -109,12 +109,20 @@ export const HAP_05: Scenario = {
     const amount = 120_000;
     const before = await ctx.balance(requester);
 
-    const created = await ctx.client.createRequest(payer.access_token, requester.user.phone, amount, 'for the ticket');
+    // POST /money-requests is created by the requester (who gets paid);
+    // `from_phone` names the payer (API.md "POST /money-requests").
+    const created = await ctx.client.createRequest(requester.access_token, payer.user.phone, amount, 'for the ticket');
     ctx.expectEq(created.status, 201, 'request created');
     ctx.expectEq(created.body.state, 'PENDING', 'request starts PENDING');
     const requestId = created.body.id;
 
-    const paid = await ctx.client.payRequest(payer.access_token, requestId, ctx.uuid());
+    // First payment between these two — pay() applies the same
+    // FIRST_TIME_RECIPIENT step-up rule as a plain transfer.
+    let paid = await ctx.client.payRequest(payer.access_token, requestId, ctx.uuid());
+    if (paid.status === 403 && paid.body?.error === 'STEP_UP_REQUIRED') {
+      const su = await ctx.client.stepUp(payer.access_token, 'PIN', payer.pin);
+      paid = await ctx.client.payRequest(payer.access_token, requestId, ctx.uuid(), su.body.step_up_token);
+    }
     ctx.expectEq(paid.status, 201, 'payer approved');
     ctx.expectEq(paid.body.transaction.kind, 'REQUEST_SETTLE', 'settlement kind');
     ctx.expectEq(await ctx.balance(requester), before + amount, 'requester credited');

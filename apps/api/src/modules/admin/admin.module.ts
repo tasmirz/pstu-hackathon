@@ -5,10 +5,11 @@ import { DisputesModule } from '../ledger/disputes/disputes.module';
 import { AdminDisputesController } from './admin-disputes.controller';
 import { AdminIntegrityController } from './admin-integrity.controller';
 import { AdminIntegrityService } from './admin-integrity.service';
+import { AdminReputationController } from './admin-reputation.controller';
 
 @Module({
   imports: [DisputesModule],
-  controllers: [AdminIntegrityController, AdminDisputesController],
+  controllers: [AdminIntegrityController, AdminDisputesController, AdminReputationController],
   providers: [AdminIntegrityService, JwtAuthGuard, AdminGuard],
 })
 export class AdminModule {}

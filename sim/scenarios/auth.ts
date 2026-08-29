@@ -21,7 +21,7 @@ export const AUTH_01: Scenario = {
     // The old token is now consumed — refreshing with it is a replay.
     const replay = await ctx.client.refresh(oldRefresh);
     ctx.expectEq(replay.status, 401, 'old token replayed');
-    ctx.expectEq(replay.body.error, 'TOKEN_REUSE_DETECTED', 'TOKEN_REUSE_DETECTED');
+    ctx.expectEq((replay.body as any).error, 'TOKEN_REUSE_DETECTED', 'TOKEN_REUSE_DETECTED');
   },
 };
 
@@ -38,7 +38,7 @@ export const AUTH_02: Scenario = {
     // Replay the FIRST token — it was consumed in AUTH-01's rotation chain.
     const replay = await ctx.client.refresh(u.refresh_token);
     ctx.expectEq(replay.status, 401, 'replayed first token rejected');
-    ctx.expectEq(replay.body.error, 'TOKEN_REUSE_DETECTED', 'family revoked');
+    ctx.expectEq((replay.body as any).error, 'TOKEN_REUSE_DETECTED', 'family revoked');
 
     // Even the most recent family member is now revoked.
     const newest = await ctx.client.refresh(rt1.body.refresh_token);
@@ -52,7 +52,7 @@ export const AUTH_03: Scenario = {
   tags: ['auth', 'tier2'],
   async run(ctx) {
     const u = await ctx.freshUser('AUTH03');
-    const results = [];
+    const results: any[] = [];
     for (let i = 0; i < 5; i += 1) {
       results.push(await ctx.client.login(u.user.phone, '0000'));
     }

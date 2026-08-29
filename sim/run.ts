@@ -1,6 +1,6 @@
 import { createPool } from '@pstu/shared';
 import { simConfig } from './config';
-import { runScenario } from './harness/runner';
+import { runScenario, ScenarioOutcome } from './harness/runner';
 import { printReport, writeJsonReport, GroupResult } from './harness/report';
 import { Scenario } from './harness/types';
 import { resetForCleanRun } from './harness/seed';
@@ -98,7 +98,9 @@ async function main() {
       }),
   );
   if (needsApi && !(await apiIsUp())) {
-    console.error(`  API is not reachable at ${simConfig.apiBaseUrl} — start apps/api (npm run start -w apps/api) first, or use --only ledger`);
+    console.error(
+      `  API is not reachable at ${simConfig.apiBaseUrl} — start apps/api (npm run start -w apps/api) first, or use --only ledger`,
+    );
     await adminPool.end();
     await txnSvcPool.end();
     process.exit(2);
@@ -115,7 +117,7 @@ async function main() {
     });
     if (filtered.length === 0) continue;
 
-    const outcomes = [];
+    const outcomes: ScenarioOutcome[] = [];
     for (const scenario of filtered) {
       outcomes.push(await runScenario(adminPool, txnSvcPool, scenario));
       if (args.bail && outcomes[outcomes.length - 1].pass === false) break;
