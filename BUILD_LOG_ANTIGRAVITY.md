@@ -4,6 +4,23 @@ Running log of backend implementation work done by Antigravity. Newest entry on 
 
 ---
 
+## 2026-08-29 — Round 5: Money Requests Inbox/Outbox (`GET /money-requests/incoming` & `GET /money-requests/outgoing`) (Completed)
+
+Implemented TASKS_ANTIGRAVITY.md Round 5 / API.md "Money Requests":
+1. **Inbox & Outbox Endpoints**:
+   - `GET /money-requests/incoming?state=&limit=&cursor=`: Lists requests where caller is `payer_id` (money requested from them), with `counterparty` populated as the requester (`id`, `name`, `phone` from `auth.users_public`).
+   - `GET /money-requests/outgoing?state=&limit=&cursor=`: Lists requests where caller is `requester_id` (money they requested), with `counterparty` populated as the payer (`id`, `name`, `phone`).
+   - Keyset pagination with `cursor` (id < cursor, `ORDER BY id DESC`), `limit` (default 20, max limit + 1 for `has_more` calculation), and optional `state` exact-match filter.
+2. **Lazy Expiry Rule**:
+   - Sweeps expired pending requests (`UPDATE ledger.money_requests SET state = 'EXPIRED' WHERE state = 'PENDING' AND expires_at <= now() AND (payer_id = $1 OR requester_id = $1)`) so expired requests are returned as `state: 'EXPIRED'` rather than silently omitted, and the underlying DB row state is flipped.
+3. **Client & Simulator Scenarios**:
+   - Added `incomingRequests` and `outgoingRequests` methods to `sim/harness/client.ts`.
+   - Added `REQ-06` (verifying outbox for requester and inbox for payer with full counterparty metadata).
+   - Added `REQ-07` (verifying lazy expiry transitions row to `EXPIRED` and presents `state: 'EXPIRED'` across incoming and outgoing).
+   - **Verification**: `REQUESTS: 7/7 PASS`, `DISPUTE: 12/12 PASS`, `BILLS: 5/5 PASS` (100% green, conservation held across all scenarios).
+
+---
+
 ## 2026-08-29 — Round 4: Simulator Coverage for Disputes, Shared Bills, and Requests (Completed)
 
 Implemented TASKS_ANTIGRAVITY.md Round 4 (HTTP simulator scenario coverage against live NestJS API):

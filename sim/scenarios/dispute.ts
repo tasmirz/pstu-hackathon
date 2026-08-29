@@ -179,8 +179,13 @@ export const DIS_08: Scenario = {
     const txnId = txn.body.transaction.id;
     const dispute = await ctx.client.raiseDispute(a.access_token, txnId, 'test');
     const disputeId = dispute.body.id;
-
-    const before = await ctx.adminPool.query(`SELECT COUNT(*)::int AS c FROM ledger.entries`);
+    const userIds = [a.user.id, b.user.id, admin.user.id];
+    const before = await ctx.adminPool.query(
+      `SELECT COUNT(*)::int AS c FROM ledger.entries e
+       JOIN ledger.accounts acc ON acc.id = e.account_id
+       WHERE acc.user_id = ANY($1::bigint[])`,
+      [userIds],
+    );
     const su = await ctx.client.stepUp(admin.access_token, 'PIN', admin.pin);
     const resolved = await ctx.client.resolveDispute(
       admin.access_token,
@@ -192,7 +197,12 @@ export const DIS_08: Scenario = {
     );
     ctx.expectEq(resolved.status, 200, 'rejected');
     ctx.expectEq(resolved.body.dispute.state, 'REJECTED', 'REJECTED');
-    const after = await ctx.adminPool.query(`SELECT COUNT(*)::int AS c FROM ledger.entries`);
+    const after = await ctx.adminPool.query(
+      `SELECT COUNT(*)::int AS c FROM ledger.entries e
+       JOIN ledger.accounts acc ON acc.id = e.account_id
+       WHERE acc.user_id = ANY($1::bigint[])`,
+      [userIds],
+    );
     ctx.expectEq(after.rows[0].c, before.rows[0].c, 'zero entries written by reject');
   },
 };

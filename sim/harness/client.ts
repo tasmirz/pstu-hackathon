@@ -163,6 +163,30 @@ export class ApiClient {
     return this.request('POST', `/money-requests/${requestId}/remind`, { token });
   }
 
+  incomingRequests(
+    token: string,
+    q: { limit?: number; cursor?: number; state?: string } = {},
+  ): Promise<ApiResult<any>> {
+    const params = new URLSearchParams();
+    if (q.limit !== undefined) params.set('limit', String(q.limit));
+    if (q.cursor !== undefined) params.set('cursor', String(q.cursor));
+    if (q.state !== undefined) params.set('state', q.state);
+    const qs = params.toString();
+    return this.request('GET', `/money-requests/incoming${qs ? '?' + qs : ''}`, { token });
+  }
+
+  outgoingRequests(
+    token: string,
+    q: { limit?: number; cursor?: number; state?: string } = {},
+  ): Promise<ApiResult<any>> {
+    const params = new URLSearchParams();
+    if (q.limit !== undefined) params.set('limit', String(q.limit));
+    if (q.cursor !== undefined) params.set('cursor', String(q.cursor));
+    if (q.state !== undefined) params.set('state', q.state);
+    const qs = params.toString();
+    return this.request('GET', `/money-requests/outgoing${qs ? '?' + qs : ''}`, { token });
+  }
+
   raiseDispute(token: string, txn_id: number, reason: string): Promise<ApiResult<any>> {
     return this.request('POST', '/disputes', { token, json: { txn_id, reason } });
   }

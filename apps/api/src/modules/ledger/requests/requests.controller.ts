@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { CurrentUser, IdempotencyKey, StepUpToken } from '../../../common/decorators';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { CreateMoneyRequestDto } from './dto';
@@ -8,6 +8,36 @@ import { RequestsService } from './requests.service';
 @UseGuards(JwtAuthGuard)
 export class RequestsController {
   constructor(private readonly requests: RequestsService) {}
+
+  @Get('incoming')
+  listIncoming(
+    @CurrentUser() user: { id: number },
+    @Query('state') state?: string,
+    @Query('cursor') cursor?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.requests.listIncoming(
+      user.id,
+      state,
+      cursor ? parseInt(cursor, 10) : undefined,
+      limit ? parseInt(limit, 10) : 20,
+    );
+  }
+
+  @Get('outgoing')
+  listOutgoing(
+    @CurrentUser() user: { id: number },
+    @Query('state') state?: string,
+    @Query('cursor') cursor?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.requests.listOutgoing(
+      user.id,
+      state,
+      cursor ? parseInt(cursor, 10) : undefined,
+      limit ? parseInt(limit, 10) : 20,
+    );
+  }
 
   @Post()
   @HttpCode(201)

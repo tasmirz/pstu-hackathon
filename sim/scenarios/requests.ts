@@ -94,4 +94,77 @@ export const REQ_05: Scenario = {
   },
 };
 
-export const requestsScenarios: Scenario[] = [REQ_01, REQ_02, REQ_03, REQ_04, REQ_05];
+export const REQ_06: Scenario = {
+  id: 'REQ-06',
+  name: 'Inbox/Outbox: GET /outgoing lists pending for requester, GET /incoming lists for payer',
+  tags: ['requests', 'tier1'],
+  async run(ctx) {
+    const [requester, payer] = await ctx.freshUsers(2, 'REQ06');
+    const amount = 85_000;
+    const note = 'lunch split';
+
+    const created = await ctx.client.createRequest(requester.access_token, payer.user.phone, amount, note);
+    ctx.expectEq(created.status, 201, 'request created');
+    const reqId = created.body.id;
+
+    // Requester outbox
+    const outbox = await ctx.client.outgoingRequests(requester.access_token);
+    ctx.expectEq(outbox.status, 200, 'outgoing ok');
+    const outItem = outbox.body.items.find((i: any) => i.id === reqId);
+    ctx.expect(!!outItem, 'request in outbox');
+    ctx.expectEq(outItem.state, 'PENDING', 'state PENDING in outbox');
+    ctx.expectEq(outItem.amount_paisa, amount, 'amount matches in outbox');
+    ctx.expectEq(outItem.note, note, 'note matches in outbox');
+    ctx.expectEq(outItem.counterparty.id, payer.user.id, 'counterparty is payer in outbox');
+    ctx.expectEq(outItem.counterparty.phone, payer.user.phone, 'counterparty phone is payer in outbox');
+
+    // Payer inbox
+    const inbox = await ctx.client.incomingRequests(payer.access_token);
+    ctx.expectEq(inbox.status, 200, 'incoming ok');
+    const inItem = inbox.body.items.find((i: any) => i.id === reqId);
+    ctx.expect(!!inItem, 'request in inbox');
+    ctx.expectEq(inItem.state, 'PENDING', 'state PENDING in inbox');
+    ctx.expectEq(inItem.amount_paisa, amount, 'amount matches in inbox');
+    ctx.expectEq(inItem.note, note, 'note matches in inbox');
+    ctx.expectEq(inItem.counterparty.id, requester.user.id, 'counterparty is requester in inbox');
+    ctx.expectEq(inItem.counterparty.phone, requester.user.phone, 'counterparty phone is requester in inbox');
+  },
+};
+
+export const REQ_07: Scenario = {
+  id: 'REQ-07',
+  name: 'Lazy expiry: expired pending request returns EXPIRED on incoming/outgoing and DB row flips',
+  tags: ['requests', 'tier1'],
+  async run(ctx) {
+    const [requester, payer] = await ctx.freshUsers(2, 'REQ07');
+    const created = await ctx.client.createRequest(requester.access_token, payer.user.phone, 95_000, 'old request');
+    ctx.expectEq(created.status, 201, 'request created');
+    const reqId = created.body.id;
+
+    // Backdate expires_at past expiry window
+    await ctx.adminPool.query(
+      `UPDATE ledger.money_requests SET expires_at = now() - interval '1 day' WHERE id = $1`,
+      [reqId],
+    );
+
+    // Requester calls /outgoing -> receives state EXPIRED
+    const outbox = await ctx.client.outgoingRequests(requester.access_token);
+    ctx.expectEq(outbox.status, 200, 'outgoing ok');
+    const outItem = outbox.body.items.find((i: any) => i.id === reqId);
+    ctx.expect(!!outItem, 'expired request returned in outbox');
+    ctx.expectEq(outItem.state, 'EXPIRED', 'state is EXPIRED in outbox');
+
+    // Payer calls /incoming -> receives state EXPIRED
+    const inbox = await ctx.client.incomingRequests(payer.access_token);
+    ctx.expectEq(inbox.status, 200, 'incoming ok');
+    const inItem = inbox.body.items.find((i: any) => i.id === reqId);
+    ctx.expect(!!inItem, 'expired request returned in inbox');
+    ctx.expectEq(inItem.state, 'EXPIRED', 'state is EXPIRED in inbox');
+
+    // DB row state actually flipped to EXPIRED
+    const { rows } = await ctx.adminPool.query(`SELECT state FROM ledger.money_requests WHERE id = $1`, [reqId]);
+    ctx.expectEq(rows[0].state, 'EXPIRED', 'DB row state is EXPIRED');
+  },
+};
+
+export const requestsScenarios: Scenario[] = [REQ_01, REQ_02, REQ_03, REQ_04, REQ_05, REQ_06, REQ_07];
