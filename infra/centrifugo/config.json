@@ -1,0 +1,8 @@
+{
+  "token_hmac_secret_key": "changeme_centrifugo_secret",
+  "admin_password": "admin",
+  "admin_secret": "changeme_admin_secret",
+  "api_key": "changeme_api_key",
+  "allowed_origins": ["*"],
+  "namespaces": []
+}
