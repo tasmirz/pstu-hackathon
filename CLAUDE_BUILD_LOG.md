@@ -7,6 +7,62 @@ new entries go in **this** file. Newest entry on top.
 
 ---
 
+## 2026-08-29 — Final polish pass: root README, stale PLAN.md/package.json, live re-verification
+
+Per the user: do my own final tasks while the other three agents work
+theirs. Deliberately picked work that's real, valuable, and structurally
+incapable of colliding with Codex (mid-`institute-bills/`, uncommitted) or
+Antigravity (dispute recovery / bill split) — repo-root documentation and
+config hygiene, not application code.
+
+- **`README.md`** (new, repo had none) — what's running, why it's built
+  this way (append-only ledger enforced by `REVOKE`, idempotency-claim-
+  first, the three-role boundary preserved through the monolith pivot),
+  the feature list split into shipped vs. this-round-in-progress, a repo
+  map, run/verify instructions, and an explicit multi-agent note. This is
+  the one artifact a judge reads first — `PSTU_Hackathon_Problem_Statement.md`
+  (found at `question/`, not the root — good to know it moved) explicitly
+  asks the team to "understand, explain, and defend" the engineering
+  decisions, and there was nothing at the root doing that job.
+- **`PLAN.md`** — added a status banner at the top. It still describes the
+  original three-service architecture with no indication the pivot
+  happened; a judge reading it cold would think that's what's deployed.
+  Left the historical content untouched, pointed to `README.md` for
+  current reality and `BUILD_LOG_CLAUDE.md` for why.
+- **`package.json`** — `dev:auth`/`dev:txn`/`dev:read`/`db:seed` all
+  pointed at workspaces/scripts that don't exist post-pivot
+  (`apps/auth-gateway` etc. were removed, `scripts/seed.js` was never
+  written). Replaced with one `dev` script pointing at `apps/api`, the
+  thing that's actually there.
+- **Live re-verification** — rebuilt, restarted the server, ran the full
+  sim: **86/88, conservation held throughout.** New since the last
+  full-board number (83/83): `LIMITS` went 1/3→3/3 and `CONCURRENCY` 3/7→7/7
+  now genuinely both green (Codex's Round 4 + DeepSeek's fixes, confirmed
+  live rather than trusted from the build logs), plus a new `NOTIFICATIONS`
+  group at 5/5 (Antigravity's Round 6). The two failures
+  (`HLD-03`/`HLD-04`, sweeper-settle timing) are a test/demo config
+  mismatch, not a regression: `.env` currently holds the demo-realistic
+  `UNDO_WINDOW_SECONDS=60`/`SWEEPER_INTERVAL_MS=5000` (correctly restored
+  after DeepSeek's earlier fast-test run), and those two scenarios sleep a
+  fixed 250ms hoping the sweeper already fired — nowhere near enough at
+  demo values. Already correctly diagnosed in `BUILD_LOG_DEEPSEEK.md`;
+  noting it here again only because it's the one thing keeping the board
+  from 88/88, and it's an intentional tradeoff (fast values for
+  iterating on the sim, demo values for the actual 3pm run), not a bug to
+  chase.
+- Noticed `infra/keys/private.pem` is committed to git. Left it alone
+  deliberately — every credential in this project already follows a
+  `changeme_*` placeholder convention for exactly this kind of closed
+  hackathon demo, regenerating it now would invalidate every already-
+  issued token for zero real security benefit in a fake-money ecosystem,
+  and touching auth keys mid-crunch is exactly the kind of "hard to
+  reverse" change the house rules ask to avoid without a clear reason.
+  Flagging it here in case anyone disagrees with that call.
+- Did **not** touch `packages/shared/src/types.ts` or anything under
+  `apps/api/src/modules/ledger/institute-bills/` — both were mid-edit,
+  uncommitted, under Codex's active work when I checked; staged and
+  committed only my own three files.
+
 ## 2026-08-29 — The real rubric surfaced: full redistribution around `EXTRA_FEATURES_AUDIT_AND_DESIGN.md`
 
 Codex's Round 4 landed clean (CONCURRENCY/HOLD/REVERSAL/LIMITS all green —
