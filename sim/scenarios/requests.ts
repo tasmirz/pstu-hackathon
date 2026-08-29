@@ -16,7 +16,7 @@ export const REQ_01: Scenario = {
     const beforeP = await ctx.balance(payer);
 
     // requester asks payer for money
-    const res = await ctx.client.createRequest(payer.access_token, requester.user.phone, 120_000, 'ticket');
+    const res = await ctx.client.createRequest(requester.access_token, payer.user.phone, 120_000, 'ticket');
     ctx.expectEq(res.status, 201, 'request created');
     ctx.expectEq(res.body.state, 'PENDING', 'PENDING');
     ctx.expectEq(await ctx.balance(requester), beforeR, 'requester balance untouched');
@@ -30,7 +30,7 @@ export const REQ_02: Scenario = {
   tags: ['requests', 'tier1'],
   async run(ctx) {
     const [requester, payer] = await ctx.freshUsers(2, 'REQ02');
-    const created = await ctx.client.createRequest(payer.access_token, requester.user.phone, 50_000, 'cancel me');
+    const created = await ctx.client.createRequest(requester.access_token, payer.user.phone, 50_000, 'cancel me');
     const id = created.body.id;
 
     const cancel = await ctx.client.cancelRequest(requester.access_token, id);
@@ -46,7 +46,7 @@ export const REQ_03: Scenario = {
   tags: ['requests', 'tier1'],
   async run(ctx) {
     const [requester, payer] = await ctx.freshUsers(2, 'REQ03');
-    const created = await ctx.client.createRequest(payer.access_token, requester.user.phone, 40_000, 'decline');
+    const created = await ctx.client.createRequest(requester.access_token, payer.user.phone, 40_000, 'decline');
     const id = created.body.id;
 
     const declined = await ctx.client.declineRequest(payer.access_token, id);
@@ -63,12 +63,12 @@ export const REQ_04: Scenario = {
   async run(ctx) {
     const [requester, payer] = await ctx.freshUsers(2, 'REQ04');
     const amount = 70_000;
-    const created = await ctx.client.createRequest(payer.access_token, requester.user.phone, amount, 'done');
+    const created = await ctx.client.createRequest(requester.access_token, payer.user.phone, amount, 'done');
     const id = created.body.id;
 
     const su = await ctx.client.stepUp(payer.access_token, 'PIN', payer.pin);
     const paid = await ctx.client.payRequest(payer.access_token, id, ctx.uuid(), su.body.step_up_token);
-    ctx.expectEq(paid.status, 201, 'paid once');
+    ctx.expectEq(paid.status, 200, 'paid once');
 
     const again = await ctx.client.payRequest(payer.access_token, id, ctx.uuid(), su.body.step_up_token);
     ctx.expectEq(again.status, 409, 'second pay rejected');
@@ -82,7 +82,7 @@ export const REQ_05: Scenario = {
   tags: ['requests', 'tier2'],
   async run(ctx) {
     const [requester, payer] = await ctx.freshUsers(2, 'REQ05');
-    const created = await ctx.client.createRequest(payer.access_token, requester.user.phone, 60_000, 'nudge');
+    const created = await ctx.client.createRequest(requester.access_token, payer.user.phone, 60_000, 'nudge');
     const id = created.body.id;
 
     const first = await ctx.client.remindRequest(requester.access_token, id);

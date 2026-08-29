@@ -363,7 +363,7 @@ export class BillsService {
         `SELECT 1 FROM ledger.bill_shares WHERE bill_id = $1 AND state = 'PAID' LIMIT 1`,
         [billId],
       );
-      if (paidShareCheck.rowCount > 0) {
+      if ((paidShareCheck.rowCount ?? 0) > 0) {
         throw new InvalidState('Cannot cancel a bill where shares have already been paid');
       }
 

@@ -123,7 +123,7 @@ export const HAP_05: Scenario = {
       const su = await ctx.client.stepUp(payer.access_token, 'PIN', payer.pin);
       paid = await ctx.client.payRequest(payer.access_token, requestId, ctx.uuid(), su.body.step_up_token);
     }
-    ctx.expectEq(paid.status, 201, 'payer approved');
+    ctx.expect([200, 201].includes(paid.status), 'payer approved');
     ctx.expectEq(paid.body.transaction.kind, 'REQUEST_SETTLE', 'settlement kind');
     ctx.expectEq(await ctx.balance(requester), before + amount, 'requester credited');
 

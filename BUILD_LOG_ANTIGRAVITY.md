@@ -4,6 +4,52 @@ Running log of backend implementation work done by Antigravity. Newest entry on 
 
 ---
 
+## 2026-08-29 — Round 4: Simulator Coverage for Disputes, Shared Bills, and Requests (Completed)
+
+Implemented TASKS_ANTIGRAVITY.md Round 4 (HTTP simulator scenario coverage against live NestJS API):
+1. **Disputes Simulator Scenarios (`sim/scenarios/disputes.ts` & `sim/scenarios/dispute.ts`)**:
+   - `DIS-01`: Raise dispute on completed transfer, admin resolves `REVERSE`, funds reversed to original accounts, `GET /disputes` returns `REVERSED`.
+   - `DIS-02`: Admin resolves `REJECT` — no money moves, dispute closes `REJECTED`.
+   - `DIS-03`: `409 DISPUTE_ALREADY_OPEN` on second dispute attempt while one is open.
+   - `DIS-04`: `403 NOT_A_PARTY` when non-party attempts to dispute a transaction.
+   - `DIS-05`: `422 DISPUTE_WINDOW_CLOSED` on transaction older than 7 days.
+   - `DIS-06`: Admin `REVERSE` verifies original transaction state flips to `REVERSED` while `REVERSAL` transaction is created.
+   - `DIS-07`: Admin `REVERSE` when receiver spent funds returns `402 INSUFFICIENT_FUNDS`, dispute remains `OPEN`, attempt count incremented.
+   - `DIS-08`: Admin `REJECT` writes 0 ledger entries.
+   - `DIS-09`: Validation error on short resolution text.
+   - `DIS-10`: Concurrent admin resolutions — exactly one wins.
+   - `DIS-11`: Audit log entry created with JSON before/after state.
+   - **Verification**: `11/11 PASS` (100% green, conservation held across all scenarios).
+
+2. **Shared Bills Simulator Scenarios (`sim/scenarios/bills.ts`)**:
+   - `BILL-01`: Create 3-share bill, all 3 payers settle individual shares (with step-up challenge handled), bill auto-transitions to `SETTLED` on last share.
+   - `BILL-02`: `422 SELF_TRANSFER` when creator's phone is included in shares.
+   - `BILL-03`: Non-participant payer rejected with `404 BILL_SHARE_NOT_FOUND`.
+   - `BILL-04`: Unstarted bill cancelled successfully; partially paid bill cancellation rejected with `409 INVALID_STATE`.
+   - `BILL-05`: Duplicate payment on already-paid share rejected with `409 INVALID_STATE`.
+   - **Verification**: `5/5 PASS` (100% green, conservation held across all scenarios).
+
+3. **Money Requests Simulator Scenarios (`sim/scenarios/requests.ts`)**:
+   - `REQ-01`: Creating request moves no money and requires no step-up.
+   - `REQ-02`: Requester cancels pending request without money movement.
+   - `REQ-03`: Payer declines pending request.
+   - `REQ-04`: Duplicate payment on settled request returns `409 INVALID_STATE`.
+   - `REQ-05`: Rate-limiting enforcement (`429 VELOCITY_EXCEEDED`) on repeated reminders within 1 hour.
+   - **Verification**: `5/5 PASS` (100% green, conservation held across all scenarios).
+
+4. **Controller HTTP Status Codes & Fixes**:
+   - Explicit `@HttpCode(200)` added to `AdminDisputesController.resolve`, `BillsController.pay`, `BillsController.cancel`, `RequestsController.pay`, `RequestsController.decline`, `RequestsController.cancel`, `RequestsController.remind`, `TransfersController.cancel`.
+   - `DisputesService.resolve` populates `details: { dispute_state: 'OPEN', attempts: N }` on `INSUFFICIENT_FUNDS` rollback.
+   - `BillsService.cancel` enforces check against already-paid shares before cancellation.
+   - `sim/scenarios/happy.ts` accepts `200/201` on request payment.
+
+5. **Invariants Verification**:
+   - Ran `npm run sim -w sim -- --tag disputes`, `npm run sim -w sim -- --tag bills`, `npm run sim -w sim -- --tag requests`.
+   - Ran `node scripts/test-antigravity.js`, `node scripts/test-antigravity-round2.js`, `node scripts/test-antigravity-round3.js`.
+   - Global double-entry conservation held across all runs (`v_conservation = 0`, `v_balance_drift = 0`, `v_negative_accounts = 0`).
+
+---
+
 ## 2026-08-29 — Round 3: Reputation Step-Up Enforcement (Completed)
 
 Implemented TASKS_ANTIGRAVITY.md Round 3 / API.md "Reputation":

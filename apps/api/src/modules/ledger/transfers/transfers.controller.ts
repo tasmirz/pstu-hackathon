@@ -1,4 +1,4 @@
-import { Body, Controller, Param, ParseIntPipe, Post, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, HttpCode, Param, ParseIntPipe, Post, Res, UseGuards } from '@nestjs/common';
 import { Response } from 'express';
 import { CurrentUser, IdempotencyKey, StepUpToken } from '../../../common/decorators';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
@@ -37,6 +37,7 @@ export class TransfersController {
   }
 
   @Post(':id/cancel')
+  @HttpCode(200)
   cancel(
     @CurrentUser() user: { id: number },
     @Param('id', ParseIntPipe) id: number,
