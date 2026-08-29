@@ -22,7 +22,9 @@ export const LIM_01: Scenario = {
       idemKey: ctx.uuid(),
       stepUpToken,
     });
-    ctx.expectEq(first.status, 201, 'first under cap accepted');
+    // 4,900,000 > 500k undo threshold => lands HELD (202); the daily-limit
+    // check still runs inside moveMoney, so spent_today now includes it.
+    ctx.expect([201, 202].includes(first.status), `first under cap accepted (${first.status})`);
 
     const second = await ctx.client.transfer(a.access_token, b.user.phone, 200_000, {
       idemKey: ctx.uuid(),
@@ -63,12 +65,13 @@ export const LIM_03: Scenario = {
     );
 
     const su = await ctx.client.stepUp(a.access_token, 'PIN', a.pin);
-    // 6,000,000 > default 5,000,000 but under the 100,000,000 override.
+    // 6,000,000 > default 5,000,000 but under the 100,000,000 override. Also
+    // above the 500k undo threshold => HELD (202) — the point is it's accepted.
     const res = await ctx.client.transfer(a.access_token, b.user.phone, 6_000_000, {
       idemKey: ctx.uuid(),
       stepUpToken: su.body.step_up_token,
     });
-    ctx.expectEq(res.status, 201, 'override allows above default cap');
+    ctx.expect([201, 202].includes(res.status), `override allows above default cap (${res.status})`);
   },
 };
 

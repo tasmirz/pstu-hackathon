@@ -24,11 +24,14 @@ export const CHA_01: Scenario = {
       stepUpToken: su.body.step_up_token,
     });
     void paused;
-    ctx.expect(attempt.status === 0 || attempt.status >= 500 || attempt.status === 502, `client saw an error (${attempt.status})`);
-    await sleep(500); // let the pool recover
-
+    // With SIGSTOP the query hangs until unpause, then either completes (201)
+    // or the pool errors. The invariant that matters: no partial write.
     const after = await ctx.balance(a);
-    ctx.expectEq(after, before, 'nothing partially written');
+    if (attempt.status >= 300 || attempt.status === 0) {
+      ctx.expectEq(after, before, 'nothing partially written on error');
+    } else {
+      ctx.expectEq(after, before - 50_000, 'clean full transfer after recovery');
+    }
   },
 };
 

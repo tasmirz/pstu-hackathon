@@ -72,11 +72,14 @@ export const REV_03: Scenario = {
       [b.user.id],
     );
 
-    // Drain B entirely to C — B has now spent everything it received.
+    // Drain B entirely to C — B has now spent everything it received. The
+    // drain is above the undo threshold so it lands HELD, debiting B's USER
+    // account immediately (money into B's HOLD) — that still leaves B with
+    // nothing available to cover a reversal, which is the point.
     const bBal = await ctx.balance(b);
     const drain = await ctx.transfer(b, c, bBal);
-    ctx.expectEq(drain.status, 201, 'B drained to C');
-    ctx.expectEq(await ctx.balance(b), 0, 'B has nothing left');
+    ctx.expect(drain.status < 300, `B drain accepted (got ${drain.status})`);
+    ctx.expectEq(await ctx.balance(b), 0, 'B has nothing available');
 
     // A reverses the original transfer; B cannot cover it -> 402, no money fabricated.
     const suA = await ctx.client.stepUp(a.access_token, 'PIN', a.pin);
@@ -102,9 +105,10 @@ export const REV_04: Scenario = {
     ctx.expectEq(first.status, 201, 'first reversal ok');
     const reversalId = first.body.reversal.id;
 
-    // Attempt to reverse the REVERSAL itself.
-    const su2 = await ctx.client.stepUp(a.access_token, 'PIN', a.pin);
-    const second = await ctx.client.reverse(a.access_token, reversalId, ctx.uuid(), su2.body.step_up_token);
+    // Attempt to reverse the REVERSAL itself — the reversal txn's sender is b
+    // (who returned the money), so b is the party attempting it.
+    const su2 = await ctx.client.stepUp(b.access_token, 'PIN', b.pin);
+    const second = await ctx.client.reverse(b.access_token, reversalId, ctx.uuid(), su2.body.step_up_token);
     ctx.expectEq(second.status, 409, 'reversal of a reversal blocked');
     ctx.expectEq(second.body.error, 'INVALID_STATE', 'INVALID_STATE');
   },

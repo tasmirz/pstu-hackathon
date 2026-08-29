@@ -127,8 +127,6 @@ export const HAP_05: Scenario = {
     ctx.expectEq(paid.body.transaction.kind, 'REQUEST_SETTLE', 'settlement kind');
     ctx.expectEq(await ctx.balance(requester), before + amount, 'requester credited');
 
-    const detail = await ctx.client.getBill(payer.access_token, requestId).catch(() => null);
-    void detail;
     const { rows } = await ctx.adminPool.query(`SELECT state FROM ledger.money_requests WHERE id = $1`, [requestId]);
     ctx.expectEq(rows[0].state, 'PAID', 'request state PAID');
   },

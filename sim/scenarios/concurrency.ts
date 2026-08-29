@@ -55,10 +55,10 @@ export const CON_02: Scenario = {
       ),
     );
 
-    const succeeded = results.filter((r) => r.status === 201).length;
-    const failed = results.filter((r) => r.status === 402).length;
+    const succeeded = results.filter((r) => r.status < 300).length;
+    const blocked = results.filter((r) => [402, 403].includes(r.status)).length;
     ctx.expect(succeeded > 0 && succeeded < 5, `some but not all succeeded (${succeeded})`);
-    ctx.expectEq(succeeded + failed, 5, 'each request either succeeded or insufficient-funds');
+    ctx.expectEq(succeeded + blocked, 5, 'each request either succeeded or was rejected (402/403)');
     const after = await ctx.balance(a);
     ctx.expect(after >= 0, `balance never negative (got ${after})`);
     ctx.expectEq(after, before - succeeded * amount, 'balance equals successes only');
@@ -145,15 +145,14 @@ export const CON_04: Scenario = {
 
     // Exactly one of two valid outcomes: cancelled (money returned) or
     // settled-by-sweeper (money gone to receiver). Never both, never nothing.
+    // Check the ORIGINAL txn only — its HOLD_CANCEL/HOLD_SETTLE child is always
+    // COMPLETED and would otherwise make "both" appear true.
     const { rows } = await ctx.adminPool.query(
-      `SELECT state, COUNT(*)::int AS children FROM ledger.transactions
-        WHERE id = $1 OR parent_txn_id = $1 GROUP BY state`,
+      `SELECT state FROM ledger.transactions WHERE id = $1`,
       [txnId],
     );
-    const states = rows.map((r: any) => r.state).sort();
-    const cancelled = states.includes('CANCELLED');
-    const completed = states.includes('COMPLETED');
-    ctx.expect(cancelled !== completed, `exactly one of CANCELLED/COMPLETED — got ${states.join(',')}`);
+    const original = rows[0]?.state;
+    ctx.expect(['CANCELLED', 'COMPLETED'].includes(original), `original is CANCELLED or COMPLETED (got ${original})`);
     const after = await ctx.balance(a);
     ctx.expect(after >= 0, 'sender balance never negative');
     void cancel;
@@ -192,7 +191,7 @@ export const CON_06: Scenario = {
     // requester asks payerA; payerB is a stranger who cannot legally pay, but
     // the request is 1:1 — the meaningful race is two pays by the SAME payer
     // where only one can win (CAS PENDING->PAID).
-    const req = await ctx.client.createRequest(payerA.access_token, requester.user.phone, amount, 'race');
+    const req = await ctx.client.createRequest(requester.access_token, payerA.user.phone, amount, 'race');
     const requestId = req.body.id;
 
     const su = await ctx.client.stepUp(payerA.access_token, 'PIN', payerA.pin);
@@ -216,7 +215,7 @@ export const CON_07: Scenario = {
   async run(ctx) {
     const [requester, payer] = await ctx.freshUsers(2, 'CON07');
     const amount = 80_000;
-    const req = await ctx.client.createRequest(payer.access_token, requester.user.phone, amount, 'decline-v-pay');
+    const req = await ctx.client.createRequest(requester.access_token, payer.user.phone, amount, 'decline-v-pay');
     const requestId = req.body.id;
 
     const su = await ctx.client.stepUp(payer.access_token, 'PIN', payer.pin);

@@ -11,6 +11,73 @@ design system "Kinetic Ledger" (`assets/da43ec6052af406ab60038e603948426`).
 
 ---
 
+## 2026-08-29 — Simulator board built + fixed to 80/80 green
+
+**Role note:** the sim work overlaps with what other agents (Claude/Codex/
+`MishtiAloo`/`tasmirz`) committed in parallel. This entry records what DeepSeek
+built, what the last 3-4 sim commits (`4ad5ee4`, `a8bec7c`, `b4ed17c`,
+`0d33603`, `97a2dd1`) revealed, and the fixes landed on top.
+
+### Built (sim/)
+
+- `harness/client.ts` — typed API client; every call returns `{status, body,
+  ms}`; auth/transfer/request/dispute/bill/admin methods; `abortAfter()` for
+  SIMULATOR.md §3.1 client-side aborts.
+- `harness/types.ts` — `makeContext` with `freshUsers`, `makeAdmin`, `balance`,
+  `transfer` (auto PIN step-up), `countTxns`, `expectAllIdentical`.
+- `scenarios/` — happy, idempotency, validation, concurrency, hold, reversal,
+  requests, dispute, auth, limits, bills, chaos; `--reset`/`--bail`/`--tag` in
+  `run.ts`; `resetForCleanRun` in `seed.ts`; `chaos.ts` wraps docker compose
+  (pause / kill+restart / waitHealthy).
+
+### What the sim diffs revealed, and the fixes
+
+Those commits fixed request/bill party ordering and status codes in the API
+controllers (requests & bills `pay` now return **200**, not 201), which made
+several scenarios stale. Fixes:
+
+| Scenario | Issue | Fix |
+|---|---|---|
+| CON-02 | counted only `201`, but amount > undo threshold → `202 HELD`; daily limit (403) can trip before insufficient funds (402) | count `status < 300`; blocked = 402 **or** 403 |
+| CON-04 | queried `id OR parent_txn_id`, so a cancelled HELD txn looked both CANCELLED and COMPLETED (child `HOLD_CANCEL` is COMPLETED) | check the **original** txn's state only |
+| CON-06 / CON-07 | `createRequest` called with the wrong party (payer token instead of requester) | `createRequest(requester.access_token, payer.phone, …)` |
+| REV-03 | drain `B→C` > 500k undo threshold → `202 HELD`, not `201` | accept `< 300`; assert B has `0` available (money parked in B's HOLD) |
+| REV-04 | reversing the REVERSAL with **a**'s token → `403 NOT_A_PARTY` (reversal txn's sender is **b**) | attempt with **b**'s token → `409 INVALID_STATE` |
+| LIM-01 / LIM-03 | 4.9M/6M paisa > 500k undo threshold → `202 HELD` | accept `[201,202]` (daily-limit check still runs in moveMoney) |
+| HAP-05 | leftover `getBill(requestId)` on a money-request id | removed |
+| chaos.ts | `docker compose` ran from `sim/` cwd (no compose file there); `docker compose ps --filter name=` unsupported | resolve repo root via `--project-directory -f`; `waitHealthy` uses `docker ps` |
+| CHA-01 | SIGSTOP pauses hang-then-complete, not hard-error | assert "no partial write" either way |
+| `scenarios/disputes.ts` | orphan: duplicate DIS-01..05 ids, exported an alias, never imported | **deleted** (canonical `dispute.ts` has DIS-01..11) |
+
+### Board result
+
+```
+LEDGER 7/7 · HAPPY 6/6 · IDEMPOTENCY 6/6 · VALIDATION 14/14 · CONCURRENCY 7/7
+HOLD 5/5 · REVERSAL 4/4 · REQUESTS 7/7 · DISPUTE 12/12 · AUTH 4/4
+LIMITS 3/3 · BILLS 5/5 · CHAOS 3/3
+83 passed  0 failed  — Conservation held across all 83 scenarios.
+```
+
+Run: `npm run sim -w sim` (API up via `npm run start -w apps/api`; infra via
+`docker compose up -d`). Add `--reset` for a clean board.
+
+### Infra check (user asked)
+
+The sim **does** use the dockerized infra — `sim/config.ts` points `adminUrl` at
+direct Postgres `:5432`, `txnSvcUrl` at PgBouncer `:6432`, and `apiBaseUrl` at
+`:3000`, exactly matching the running stack. A mid-session run showed
+`fetch failed` on ~half the board because the **API process had died** (port
+3000 closed) while infra stayed up — a restart of `node dist/main.js` restored
+the full green board. Not a sim/infra mismatch.
+
+### Environment note
+
+`apps/api/.env` set to `UNDO_WINDOW_SECONDS=3` / `SWEEPER_INTERVAL_MS=250` so
+hold scenarios run deterministically (SIMULATOR.md §3.4). Restore `60`/`5000`
+for the live demo's HELD beat.
+
+---
+
 ## 2026-08-29 — Reputation indicator + LOW step-up, frozen banner, REVERSAL row
 
 ### What changed
