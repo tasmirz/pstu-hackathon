@@ -4,6 +4,24 @@ Running log of backend implementation work done by Antigravity. Newest entry on 
 
 ---
 
+## 2026-08-29 — Round 3: Reputation Step-Up Enforcement (Completed)
+
+Implemented TASKS_ANTIGRAVITY.md Round 3 / API.md "Reputation":
+1. **Rule Enforcement**:
+   - Evaluates recipient trust score from `ledger.v_user_reputation` (`reputation_score < config.reputationStepUpThreshold`, default 30).
+   - If recipient reputation is below 30, triggers `403 STEP_UP_REQUIRED` with `reason: 'LOW_REPUTATION_RECIPIENT'` regardless of transaction amount.
+   - Evaluated transactionally prior to `moveMoney` in:
+     - `TransfersService.transfer` (`apps/api/src/modules/ledger/transfers/transfers.service.ts`) against `receiver.id`.
+     - `BillsService.pay` (`apps/api/src/modules/ledger/bills/bills.service.ts`) against `bill.created_by`.
+     - `RequestsService.pay` (`apps/api/src/modules/ledger/requests/requests.service.ts`) against `reqRow.requester_id`.
+2. **Verification**:
+   - Created `scripts/test-antigravity-round3.js` manufacturing low reputation scores ($< 30$) via `REVERSED` disputes.
+   - Verified that `transfer`, `requestsService.pay`, and `billsService.pay` all reject unauthenticated calls to low-reputation counterparties with `LOW_REPUTATION_RECIPIENT` and succeed upon providing a valid `X-Step-Up-Token`.
+   - Verified that transfers to normal-reputation counterparties ($\ge 30$) proceed without requiring low-reputation step-up.
+   - Verified ledger invariants: `v_conservation = 0`, `v_balance_drift = 0`, `v_negative_accounts = 0`.
+
+---
+
 ## 2026-08-29 — Round 2: HOLD / 60-Second Undo Window & Sweeper Service (Completed)
 
 Implemented PLAN.md §4.2 / TASKS_ANTIGRAVITY.md Round 2:

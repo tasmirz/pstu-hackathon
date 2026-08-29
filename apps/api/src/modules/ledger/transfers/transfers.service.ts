@@ -68,6 +68,16 @@ export class TransfersService {
       }
       requireStepUp({ userId: senderId, token: stepUpToken, reason: 'AMOUNT_THRESHOLD', amountPaisa });
 
+      // Recipient reputation check: if below threshold, step-up is required regardless of amount
+      const repRes = await t.query(
+        `SELECT reputation_score FROM ledger.v_user_reputation WHERE user_id = $1`,
+        [receiver.id],
+      );
+      const receiverScore = repRes.rows[0]?.reputation_score ?? 50;
+      if (receiverScore < config.reputationStepUpThreshold) {
+        requireStepUp({ userId: senderId, token: stepUpToken, reason: 'LOW_REPUTATION_RECIPIENT', always: true });
+      }
+
       // Threshold check: if above undo threshold, money moves into sender's HOLD account
       if (amountPaisa > config.undoThresholdPaisa) {
         const settleAfter = new Date(Date.now() + config.undoWindowSeconds * 1000);

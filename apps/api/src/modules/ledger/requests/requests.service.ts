@@ -13,6 +13,7 @@ import {
 import { LEDGER_POOL } from '../../../db/db.module';
 import { claimIdempotencyKey, storeIdempotencyResponse } from '../../../common/idempotency.util';
 import { requireStepUp } from '../../../common/step-up.util';
+import { config } from '../../../config';
 import { UsersRepository } from '../core/users.repository';
 import { LEDGER_WRITER_PORT, LedgerWriterPort } from '../core/ledger-writer.port';
 
@@ -100,6 +101,16 @@ export class RequestsService {
         requireStepUp({ userId: payerId, token: stepUpToken, reason: 'FIRST_TIME_RECIPIENT', always: true });
       }
       requireStepUp({ userId: payerId, token: stepUpToken, reason: 'AMOUNT_THRESHOLD', amountPaisa: reqRow.amount });
+
+      // Recipient (requester) reputation check: if below threshold, step-up is required regardless of amount
+      const repRes = await t.query(
+        `SELECT reputation_score FROM ledger.v_user_reputation WHERE user_id = $1`,
+        [reqRow.requester_id],
+      );
+      const requesterScore = repRes.rows[0]?.reputation_score ?? 50;
+      if (requesterScore < config.reputationStepUpThreshold) {
+        requireStepUp({ userId: payerId, token: stepUpToken, reason: 'LOW_REPUTATION_RECIPIENT', always: true });
+      }
 
       const moveResult = await this.ledgerWriter.moveMoney(t, {
         senderId: payerId,
