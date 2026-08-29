@@ -44,6 +44,7 @@ lerna-debug.log*
 coverage/
 .nyc_output/
 .pytest_cache/
+sim/sim-results.json
 
 # OS and Editor files
 .DS_Store

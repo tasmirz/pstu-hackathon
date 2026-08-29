@@ -144,6 +144,12 @@ export class AccountLocked extends AppError {
   }
 }
 
+export class LedgerIntegrityError extends AppError {
+  constructor(message: string) {
+    super(500, 'LEDGER_INTEGRITY_ERROR', message);
+  }
+}
+
 export class VelocityExceeded extends AppError {
   constructor() {
     super(429, 'VELOCITY_EXCEEDED', 'Too many transactions per minute; re-enter your PIN to continue');

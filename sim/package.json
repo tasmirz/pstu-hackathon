@@ -1,0 +1,17 @@
+{
+  "name": "@pstu/sim",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "sim": "ts-node --transpile-only run.ts"
+  },
+  "dependencies": {
+    "@pstu/shared": "*",
+    "pg": "^8.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4"
+  }
+}

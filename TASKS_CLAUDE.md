@@ -8,30 +8,33 @@ point both of their task files deliberately avoid touching:
 (the three-services-to-one-monolith pivot) and `API.md` (Bill Payment
 section).
 
-## Status — checked 2026-08-29 ~13:20, against commit `df0dee5`
+## Status — checked 2026-08-29 ~13:40, against local working tree (Codex committed nothing yet, delivered on disk)
 
 | Agent | Round | Status |
 |---|---|---|
-| Codex | Bootstrap + `AuthModule` + `QueryModule` + `AdminModule` | ❌ **not started** — blocking, see below |
+| Codex | Bootstrap + `AuthModule` + `QueryModule` + `AdminModule` | ✅ **done, verified end-to-end** |
 | Antigravity | Round 1: Disputes, Bill Payment 1:1, Shared Bill Payment | ✅ **done, verified** — `node scripts/test-antigravity.js` all green, conservation holds |
 | Antigravity | Round 2: HOLD / 60-second undo window | 🔵 assigned, in progress |
 
-**Codex's task is genuinely blocking**, confirmed by inspection: no
-`main.ts`, `app.module.ts`, `modules/auth`, `modules/query`, or
-`modules/admin` exist on `main`. Concretely blocked on it right now:
-Antigravity's `DisputesModule`/`RequestsModule`/`BillsModule` (built,
-tested, sitting unimported), the existing `AdminDisputesController`
-(written, unregistered — no `AdminModule` to host it), the frontend
-(`frontend/`, already has login/send/history/disputes/bills/admin pages
-scaffolded) has no real API to call, and nobody can log in to test anything
-over HTTP. `TASKS_CODEX.md` has been updated with an urgency banner and the
-now-current state of what's waiting on it.
+**The whole app now boots and works.** `apps/api` builds clean, every
+module (`AuthModule`, `QueryModule`, `TransfersModule`, `ReversalsModule`,
+`DisputesModule`, `RequestsModule`, `BillsModule`, `AdminModule` — including
+Antigravity's `AdminDisputesController`) is wired into `app.module.ts` and
+maps its routes on boot. Claude ran a live end-to-end smoke test against the
+real server: register (real signup-bonus ledger txn) → login → balance →
+phone lookup → step-up → transfer (idempotent, real double-entry) → promote
+to admin → `GET /admin/integrity` (conservation/drift/negative/chain all
+`pass:true`) → `GET /admin/integrity` correctly `403`s for a non-admin. Then
+ran `npm run sim -w sim` (the new LEDGER invariant group) against that same,
+now-busier database — still 7/7 green. New migration
+`infra/sql/004_admin_integrity_grants_codex.sql` (grants `txn_svc` SELECT on
+the three integrity views) applied clean.
 
-Fixed while checking: `modules/ledger/transfers/` and
+Also fixed while checking: `modules/ledger/transfers/` and
 `modules/ledger/reversals/` (Claude's own earlier work) were missing their
 `.module.ts` files — Codex's bootstrap would have failed to import them.
-Added both (`transfers.module.ts`, `reversals.module.ts`), rebuilt
-`apps/api` clean.
+Added both (`transfers.module.ts`, `reversals.module.ts`) before Codex's
+bootstrap needed them; no conflict.
 
 ## Assignments
 
@@ -48,14 +51,17 @@ bootstrap lands.
 
 ## Checklist
 
-- [ ] Codex: bootstrap + `AuthModule` (blocking — nothing runs end-to-end until this lands)
-- [ ] Codex: `QueryModule`
-- [ ] Codex: `AdminModule` (+ registering the already-built `AdminDisputesController`)
+- [x] Codex: bootstrap + `AuthModule` — done, verified
+- [x] Codex: `QueryModule` — done, verified
+- [x] Codex: `AdminModule` (+ registering the already-built `AdminDisputesController`) — done, verified
 - [x] Antigravity Round 1: `DisputesModule`, `RequestsModule`, `BillsModule` — done, verified
 - [ ] Antigravity Round 2: HOLD/undo-window transfers
-- [ ] Claude: wire everything into `app.module.ts` once Codex's bootstrap + Antigravity's modules are both ready
-- [ ] Claude: end-to-end smoke test (register → transfer → dispute → bill → hold/cancel) + the three invariant views
-- [ ] Frontend (`frontend/`, separate track, not covered by these task files): wire real API once Codex's bootstrap lands
+- [x] Claude: wire everything into `app.module.ts` — Codex did this directly, verified correct
+- [x] Claude: end-to-end smoke test (register → login → balance → lookup → transfer → admin integrity) + the three invariant views — all clean
+- [x] Claude: `sim/` scenario simulator, LEDGER group (`LED-01..07`) — 7/7, see `CLAUDE_BUILD_LOG.md`
+- [ ] End-to-end smoke test of Disputes/Bills/Requests over real HTTP (only tested via Antigravity's direct-DB script so far — now that Auth is up, worth a real HTTP pass)
+- [ ] `sim/harness/client.ts` + `HAP`/`IDEM`/`VAL`/`CON` scenario groups, now that the server is confirmed up
+- [ ] Frontend (`frontend/`, separate track, not covered by these task files): wire real API now that it's live
 
 Update this file as each piece lands — it's the one place that should
 always reflect current reality, since the two task files aren't rewritten
