@@ -37,7 +37,12 @@ export default function MoneyRequestsPage() {
   const [phone, setPhone] = useState('+8801733445566');
   const [amountStr, setAmountStr] = useState('1200');
   const [note, setNote] = useState('for the ticket');
-  const [recipient, setRecipient] = useState<{ id: number; name: string; phone: string } | null>(null);
+  const [recipient, setRecipient] = useState<{
+    id: number;
+    name: string;
+    phone: string;
+    reputation?: { score: number; tier: 'GOOD' | 'FAIR' | 'LOW' };
+  } | null>(null);
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [createSuccess, setCreateSuccess] = useState(false);
@@ -318,10 +323,36 @@ export default function MoneyRequestsPage() {
                 }
               />
               {recipient && (
-                <div className="p-2 rounded bg-surface-container-low border border-outline-variant flex items-center gap-2 text-xs">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span className="font-bold text-on-surface">{recipient.name}</span>
-                  <span className="text-on-surface-variant font-mono">({recipient.phone})</span>
+                <div className="p-2.5 rounded bg-surface-container-low border border-outline-variant flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span className="font-bold text-on-surface">{recipient.name}</span>
+                    <span className="text-on-surface-variant font-mono">({recipient.phone})</span>
+
+                    {recipient.reputation && (
+                      <span
+                        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                          recipient.reputation.tier === 'GOOD'
+                            ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
+                            : recipient.reputation.tier === 'FAIR'
+                            ? 'bg-blue-50 text-blue-900 border-blue-300'
+                            : 'bg-amber-50 text-amber-950 border-amber-300 font-bold'
+                        }`}
+                      >
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            recipient.reputation.tier === 'GOOD'
+                              ? 'bg-emerald-600'
+                              : recipient.reputation.tier === 'FAIR'
+                              ? 'bg-blue-600'
+                              : 'bg-amber-600'
+                          }`}
+                        />
+                        <span>{recipient.reputation.tier === 'GOOD' ? 'Good' : recipient.reputation.tier === 'FAIR' ? 'Fair' : 'Low Trust'}</span>
+                        <span className="text-[10px] font-mono opacity-75">({recipient.reputation.score})</span>
+                      </span>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

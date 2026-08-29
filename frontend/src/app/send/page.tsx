@@ -20,6 +20,7 @@ import {
   Timer,
   Sparkles,
   Users,
+  ShieldAlert,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { PERSONAS } from '@/components/common/UserSwitcher';
@@ -30,6 +31,10 @@ interface RecipientLookup {
   fullName?: string;
   phone: string;
   is_first_time?: boolean;
+  reputation?: {
+    score: number;
+    tier: 'GOOD' | 'FAIR' | 'LOW';
+  };
 }
 
 export default function SendMoneyPage() {
@@ -288,18 +293,55 @@ function SendMoneyContent() {
               }
             />
 
-            {/* Resolved Name Chip */}
+            {/* Resolved Name Chip with Reputation Indicator */}
             {recipient && (
-              <div className="p-2.5 rounded bg-surface-container-low border border-outline-variant flex items-center justify-between text-xs animate-in fade-in">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span className="font-bold text-on-surface">{recipient.name}</span>
-                  <span className="text-on-surface-variant font-mono">({recipient.phone})</span>
+              <div className="space-y-2 animate-in fade-in">
+                <div className="p-2.5 rounded bg-surface-container-low border border-outline-variant flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span className="font-bold text-on-surface">{recipient.name}</span>
+                    <span className="text-on-surface-variant font-mono">({recipient.phone})</span>
+
+                    {/* Reputation Indicator Dot & Tier */}
+                    {recipient.reputation && (
+                      <span
+                        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                          recipient.reputation.tier === 'GOOD'
+                            ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
+                            : recipient.reputation.tier === 'FAIR'
+                            ? 'bg-blue-50 text-blue-900 border-blue-300'
+                            : 'bg-amber-50 text-amber-950 border-amber-300 font-bold'
+                        }`}
+                      >
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            recipient.reputation.tier === 'GOOD'
+                              ? 'bg-emerald-600'
+                              : recipient.reputation.tier === 'FAIR'
+                              ? 'bg-blue-600'
+                              : 'bg-amber-600'
+                          }`}
+                        />
+                        <span>{recipient.reputation.tier === 'GOOD' ? 'Good' : recipient.reputation.tier === 'FAIR' ? 'Fair' : 'Low Trust'}</span>
+                        <span className="text-[10px] font-mono opacity-75">({recipient.reputation.score})</span>
+                      </span>
+                    )}
+                  </div>
+
+                  {recipient.is_first_time && (
+                    <span className="text-[10px] font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
+                      ⚠ First-time recipient
+                    </span>
+                  )}
                 </div>
-                {recipient.is_first_time && (
-                  <span className="text-[10px] font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
-                    ⚠ First-time recipient
-                  </span>
+
+                {recipient.reputation?.tier === 'LOW' && (
+                  <div className="p-2.5 rounded bg-amber-50 border border-amber-200 text-amber-950 text-xs flex items-center gap-2 animate-in fade-in">
+                    <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>
+                      <strong>Elevated Risk Counterparty:</strong> This recipient has a low trust score (score &lt; 30). PIN/TOTP step-up authentication will be required.
+                    </span>
+                  </div>
                 )}
               </div>
             )}

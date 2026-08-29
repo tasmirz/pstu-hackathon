@@ -100,7 +100,7 @@ function getInitialState(): StoredState {
 
   // Accounts: SYSTEM_MINT is account #1.
   const accounts: StoredAccount[] = [
-    { id: 1, user_id: null, type: 'SYSTEM_MINT', balance: -23450000 },
+    { id: 1, user_id: null, type: 'SYSTEM_MINT', balance: -24450000 },
     { id: 84, user_id: 42, type: 'USER', balance: 9750000 },
     { id: 184, user_id: 42, type: 'HOLD', balance: 1000000 },
     { id: 86, user_id: 43, type: 'USER', balance: 4500000 },
@@ -391,16 +391,31 @@ class MockEngine {
       return getInitialState();
     }
     const saved = localStorage.getItem(STORAGE_KEY);
+    let state: StoredState;
     if (saved) {
       try {
-        return JSON.parse(saved);
+        state = JSON.parse(saved);
       } catch {
-        // fallback
+        state = getInitialState();
+      }
+    } else {
+      state = getInitialState();
+    }
+
+    // Self-healing conservation guarantee: SYSTEM_MINT balance must equal -SUM(all other accounts)
+    if (state.accounts && Array.isArray(state.accounts)) {
+      const mint = state.accounts.find((a) => a.type === 'SYSTEM_MINT');
+      if (mint) {
+        let nonMintSum = 0;
+        state.accounts.forEach((a) => {
+          if (a.type !== 'SYSTEM_MINT') nonMintSum += a.balance;
+        });
+        mint.balance = -nonMintSum;
       }
     }
-    const init = getInitialState();
-    this.saveState(init);
-    return init;
+
+    this.saveState(state);
+    return state;
   }
 
   private saveState(state: StoredState = this.state) {
@@ -556,12 +571,26 @@ class MockEngine {
     const parts = user.name.split(' ');
     const initialName = parts.length > 1 ? `${parts[0]} ${parts[parts.length - 1][0]}.` : parts[0];
 
+    const completedTxns = this.state.transactions.filter(
+      (t) => (t.counterparty?.id === user.id || t.entries?.some((e: any) => e.user_id === user.id || e.account_id === user.id)) && t.state === 'COMPLETED'
+    ).length;
+    const reversedDisputes = this.state.disputes.filter(
+      (d) => (d.counterparty?.id === user.id || d.raised_by?.id === user.id) && d.state === 'REVERSED'
+    ).length;
+    const isFrozen = user.status === 'FROZEN';
+    const score = Math.max(0, Math.min(100, Math.round(50 + Math.min(30, completedTxns * 0.5) - reversedDisputes * 15 - (isFrozen ? 40 : 0))));
+    const tier: 'GOOD' | 'FAIR' | 'LOW' = score >= 70 ? 'GOOD' : score >= 30 ? 'FAIR' : 'LOW';
+
     return {
       id: user.id,
       name: initialName,
       fullName: user.name,
       phone: user.phone,
       is_first_time: user.id === 45,
+      reputation: {
+        score,
+        tier,
+      },
     };
   }
 

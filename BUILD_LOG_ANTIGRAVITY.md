@@ -4,6 +4,103 @@ Running log of backend implementation work done by Antigravity. Newest entry on 
 
 ---
 
+## 2026-08-29 — Simulator Interactive Dashboard & Live Harness UI (Completed)
+
+Implemented interactive graphical dashboard for scenario testing & judge verification:
+1. **Interactive UI (`frontend/src/app/simulator/page.tsx`)**:
+   - 15 graphic scenario execution buttons for every domain suite (Disputes, Bills, Group, Auth, Requests, Notifications, Concurrency, HOLD, Reversals, Limits, Chaos, Idempotency, Validation, Ledger, and All Suites).
+   - Real-time double-entry conservation invariant monitor (`v_conservation`, `v_balance_drift`, `v_negative_accounts`).
+   - Live streaming terminal console for raw output and instant scenario breakdown.
+   - Comprehensive Judge Technical Architecture & Feature Reference collapsible cards covering ACID guarantees, row-level locking strategies, and domain invariants.
+2. **Next.js Backend Simulator API (`frontend/src/app/api/sim/route.ts`)**:
+   - Executes live simulator runs against the real NestJS backend and PostgreSQL database, returning structured JSON results.
+3. **Sidebar & Navigation Integration (`frontend/src/components/layout/Sidebar.tsx`)**:
+   - Added `Simulator Dashboard` with `Terminal` icon under Judge Verification.
+
+---
+
+## 2026-08-29 — RFC 6238 TOTP Two-Factor Authentication & Step-Up (Completed)
+
+Implemented full RFC 6238 TOTP 2FA security subsystem:
+1. **Shared Cryptographic Library (`packages/shared/src/totp.ts`)**:
+   - `generateBase32Secret`: Generates 20-byte Base32 secrets.
+   - `generateTotp`: Computes 6-digit TOTP tokens with 30-second time steps using HMAC-SHA1 counter.
+   - `verifyTotp`: Validates submitted OTP codes with a configurable $\pm 1$ time-step drift window.
+2. **Backend API Endpoints (`apps/api/src/modules/auth/`)**:
+   - `POST /auth/totp/setup`: Generates Base32 secret and `otpauth://totp/` URL for authenticator apps.
+   - `POST /auth/totp/verify`: Verifies initial 6-digit code and activates `totp_enabled = true` on `auth.users`.
+   - `POST /auth/step-up`: Extended to support `method: 'TOTP'` alongside `method: 'PIN'`. Validates OTP code against user's `totp_secret` and issues short-lived ECDSA/RSA signed JWT step-up token.
+3. **Frontend Integration (`frontend/src/app/totp/page.tsx` & `StepUpModal.tsx`)**:
+   - Interactive setup screen with manual Base32 key entry and live code verification.
+   - `StepUpModal` dynamically supports 4-digit PIN or 6-digit TOTP methods, invoking real `POST /auth/step-up`.
+4. **Simulator Verification (`AUTH-05`)**:
+   - `AUTH-05` tests setup, rejection of invalid codes, verification of valid OTP, and step-up authorization with TOTP token.
+   - **Verification**: `AUTH: 5/5 PASS`.
+
+---
+
+## 2026-08-29 — Round 9: Send Money to a Group / Group Payment Module (Completed)
+
+Implemented multi-recipient batch payment module (`apps/api/src/modules/ledger/group-payments/`):
+1. **Database Schema (`infra/sql/007_extra_features_antigravity.sql`)**:
+   - `ledger.group_batches`: `id`, `sender_id`, `total_amount_paisa`, `item_count`, `title`, `state` (`PROCESSING`, `COMPLETED`, `PARTIALLY_COMPLETED`, `FAILED`).
+   - `ledger.group_batch_items`: `id`, `batch_id`, `receiver_id`, `amount_paisa`, `state` (`COMPLETED`, `REFUNDED`), `txn_id`, `error_reason`.
+2. **ACID Mechanics & Invariant Handling (`GroupPaymentsService`)**:
+   - **All-or-Nothing Balance Reservation**: Verifies total amount against available balance (accounting for dispute holds) and moves full batch total into sender's dedicated `HOLD` account via balanced double-entry `moveMoney`.
+   - **Per-Child Disbursement Isolation**: Valid recipients are credited individually from the `HOLD` account.
+   - **Safe Automatic Refunds**: If any recipient is invalid or frozen, their portion is refunded from sender `HOLD` back to sender `USER` account via double-entry `HOLD_CANCEL`.
+3. **Endpoints & Module**:
+   - `POST /group-transfers`: Batch creation with idempotency and step-up checks.
+   - `GET /group-transfers/mine`: Keyset-paginated batch history for sender.
+   - `GET /group-transfers/:id`: Detailed batch summary and child line items.
+4. **Simulator Coverage (`sim/scenarios/group.ts`)**:
+   - `GRP-01`: All recipients valid — batch `COMPLETED`, all recipients credited, sender debited total.
+   - `GRP-02`: Invalid recipient — batch `PARTIALLY_COMPLETED`, valid credited, invalid refunded.
+   - `GRP-03`: Insufficient funds — `402 INSUFFICIENT_FUNDS`, batch rejected before reservation.
+   - **Verification**: `GROUP: 3/3 PASS`.
+
+---
+
+## 2026-08-29 — Round 8: Multi-Party Bill Splitting & Partial Payments (Completed)
+
+Enhanced shared bill subsystem (`apps/api/src/modules/ledger/bills/`):
+1. **Equal Split Integer Distribution (`BillsService.create`)**:
+   - Supports `split_mode: 'EQUAL'` alongside `'CUSTOM'`.
+   - Divides total paisa among $N$ participants: `base = floor(total / N)`, assigning 1 extra paisa to the first `total % N` shares. Eliminates fractional loss with exact integer conservation.
+2. **Safe Partial Share Payments (`BillsService.pay`)**:
+   - Added `ledger.bill_payments` tracking individual payment installments.
+   - Payers can pay custom `amount_paisa` ($0 < amount \le remaining$).
+   - Transitions share state: `PENDING -> PARTIALLY_PAID -> PAID`.
+   - Parent bill row is locked first (`FOR UPDATE`) for consistent deadlock-free lock ordering (BS-05).
+   - Auto-settles bill (`state = 'SETTLED'`) once all shares are fully paid.
+3. **Simulator Coverage (`sim/scenarios/bills.ts`)**:
+   - `BILL-06`: Equal split integer distribution with remainder paisa allocation.
+   - `BILL-07`: Concurrent share payment race.
+   - `BILL-08`: Multi-installment partial payments and auto-settlement.
+   - **Verification**: `BILLS: 8/8 PASS`.
+
+---
+
+## 2026-08-29 — Round 7: Dispute Escrow on Open & Recovery on Deficit (Completed)
+
+Implemented dispute escrow and deficit recovery subsystem (`apps/api/src/modules/ledger/disputes/`):
+1. **Schema Migration (`infra/sql/007_extra_features_antigravity.sql`)**:
+   - `secured_amount`, `refunded_amount` on `ledger.disputes`.
+   - `ledger.recovery_cases`: `id`, `dispute_id`, `debtor_user_id`, `deficit_amount`, `state` (`OPEN`, `RESOLVED`).
+2. **Escrow on Open (`DisputesService.raise`)**:
+   - On open: Locks receiver account and records `secured_amount = min(available, txn.amount)` without early ledger movements.
+   - `QueryService.balance` and `LedgerWriterService.moveMoney` subtract active dispute holds from spendable balance, preventing debtor double-spending.
+3. **Recovery on Deficit Approval (`DisputesService.resolve`)**:
+   - Admin `REVERSE`: Refunds available `secured_amount` to original sender via double-entry `REVERSAL`. If `secured_amount < txn.amount`, creates `ledger.recovery_cases` for the deficit.
+   - Admin `REJECT`: Unlocks dispute hold with 0 ledger entries.
+   - `GET /admin/disputes/recovery-cases`: Keyset-paginated recovery queue.
+4. **Simulator Coverage (`sim/scenarios/dispute.ts`)**:
+   - `DIS-13`: DM-02 deficit recovery flow (partial refund + recovery case, third party unaffected).
+   - `DIS-14`: DM-03 spend-dispute race barrier.
+   - **Verification**: `DISPUTE: 14/14 PASS`.
+
+---
+
 ## 2026-08-29 — Round 6: Notification Writes (`notify.notifications` & `NotificationsModule`) (Completed)
 
 Implemented TASKS_ANTIGRAVITY.md Round 6:

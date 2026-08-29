@@ -28,6 +28,7 @@ interface ParticipantRow {
   phone: string;
   amountStr: string;
   resolvedName?: string;
+  reputation?: { score: number; tier: 'GOOD' | 'FAIR' | 'LOW' };
   lookupLoading?: boolean;
   lookupError?: string;
 }
@@ -41,8 +42,8 @@ export default function CreateBillPage() {
   const [totalAmountInput, setTotalAmountInput] = useState('800');
 
   const [rows, setRows] = useState<ParticipantRow[]>([
-    { id: '1', phone: '+8801798765432', amountStr: '400', resolvedName: 'Karim Uddin' },
-    { id: '2', phone: '+8801755667788', amountStr: '400', resolvedName: 'Nadia Sultana' },
+    { id: '1', phone: '+8801798765432', amountStr: '400', resolvedName: 'Karim Uddin', reputation: { score: 50, tier: 'FAIR' } },
+    { id: '2', phone: '+8801755667788', amountStr: '400', resolvedName: 'Nadia Sultana', reputation: { score: 50, tier: 'FAIR' } },
   ]);
 
   const [submitting, setSubmitting] = useState(false);
