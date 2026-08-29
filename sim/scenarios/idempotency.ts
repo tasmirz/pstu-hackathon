@@ -85,14 +85,18 @@ export const IDEM_04: Scenario = {
 
     // B uses the SAME key string against a DIFFERENT recipient. Key is scoped
     // (user_id, key) — this must create B's own transfer, not replay A's.
-    const bRes = await ctx.client.transfer(b.access_token, c.user.phone, amount, { idemKey: key });
+    // B has never sent to C before, so this also needs its own step-up —
+    // use ctx.transfer (auto-retries with PIN) rather than the raw client
+    // call, same as `a`'s leg above.
+    const bBefore = await ctx.balance(b);
+    const bRes = await ctx.transfer(b, c, amount, { key });
     ctx.expectEq(bRes.status, 201, 'B accepted (key is per-user)');
     ctx.expect(bRes.body.transaction.ref !== aRes.body.transaction.ref, 'B got a different transaction');
 
-    // Now B replays B's OWN key: identical response.
+    // Now B replays B's OWN key: identical response, no second debit.
     const bReplay = await ctx.client.transfer(b.access_token, c.user.phone, amount, { idemKey: key });
     ctx.expectEq(bReplay.body.transaction.ref, bRes.body.transaction.ref, 'B replay identical');
-    ctx.expectEq(await ctx.balance(b), await ctx.balance(b) - 0 + (await ctx.balance(b)) - 0 > 0 ? await ctx.balance(b) : await ctx.balance(b), 'no-op guard'); // placeholder replaced below
+    ctx.expectEq(await ctx.balance(b), bBefore - amount, 'exactly one debit for B');
   },
 };
 
@@ -140,7 +144,11 @@ export const IDEM_06: Scenario = {
       idemKey: key,
       stepUpToken: su.body.step_up_token,
     });
-    ctx.expectEq(retried.status, 201, 'retry with same key succeeds');
+    // This amount is above config.undoThresholdPaisa, so a successful
+    // transfer lands as HELD (202), not COMPLETED (201) — see PLAN.md §4.2
+    // and transfers.controller.ts. Either way it's still exactly one debit,
+    // which is the property this scenario is actually about.
+    ctx.expect(retried.status === 201 || retried.status === 202, `retry with same key succeeds — got ${retried.status}`);
     ctx.expectEq(await ctx.balance(a), before - amount, 'exactly one debit');
   },
 };

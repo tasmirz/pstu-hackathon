@@ -1,113 +1,106 @@
-# Assignment: Antigravity — Round 3: Reputation Step-Up Enforcement
+# Assignment: Antigravity — Round 4: Sim Coverage for Your Own Modules (fast)
 
-## Rounds 1 & 2 — done, verified, thank you
+## Rounds 1–3 — done, verified, thank you
 
-Round 1 (Disputes, Bill Payment 1:1, Shared Bill Payment) and Round 2
-(HOLD/60-second undo-window transfers, incl. `sweeper.service.ts` and
-extending `MoveMoneyParams` with account-id overrides) both landed and
-pass their respective test scripts end to end
-(`scripts/test-antigravity.js`, `scripts/test-antigravity-round2.js`),
-verified live by Claude against the running app with conservation holding
-throughout. Nothing in this round asks you to revisit either.
+Disputes/Bill Payment/Shared Bill Payment (R1), HOLD/undo-window (R2), and
+`LOW_REPUTATION_RECIPIENT` step-up enforcement (R3) all verified live —
+R3's own `scripts/test-antigravity-round3.js` is 8/8 green, and Claude
+independently reran it plus the full `sim` suite (LEDGER 7/7, HAPPY 6/6,
+IDEMPOTENCY 6/6 — 19/19, conservation held) against the live server.
+Nothing here asks you to revisit that logic.
 
 ---
 
-## The feature: Reputation
+## The gap this round closes
 
-Claude built a read-only, derived trust score per user:
-`ledger.v_user_reputation` (`infra/sql/005_reputation_claude.sql`, already
-applied, granted to `txn_svc` — your pool can already select it, no new
-migration needed). Score `0`–`100`, computed from completed transaction
-count, account age, disputes the user was party to that resolved
-`REVERSED`, and current `FROZEN` status. Full contract — including the
-honest limitation about not being able to determine fault in a dispute —
-is in `API.md` under **"Reputation"**. Read that section first.
+Every verification of Disputes/Requests/Bills so far — yours and Claude's —
+has gone through the **service classes directly**
+(`scripts/test-antigravity*.js` `require()`s `dist/modules/...` and calls
+`.pay()`/`.resolve()` etc. straight on the class). That's real and it's
+right for what it tested, but it means the **controller layer** — route
+guards (`JwtAuthGuard`, `AdminGuard`), `X-Step-Up-Token` header parsing,
+`Idempotency-Key` header handling, DTO validation — has never actually run
+for your modules. `sim/`'s HAPPY and IDEMPOTENCY groups now prove exactly
+that layer for Transfers (they hit real HTTP via `sim/harness/client.ts`).
+Your modules are the one place that layer is still unproven.
 
-Codex is separately exposing the score as a *read* (`GET /users/lookup`
-gets a `reputation` field) — **not your job, don't touch `QueryModule`**.
-Your job is the one new *enforcement* rule this feature adds to the money
-path.
+This is fast because **all the plumbing already exists** —
+`sim/harness/client.ts` already has every method you need:
+`raiseDispute`, `myDisputes`, `adminDisputes`, `resolveDispute`,
+`createRequest`/`payRequest`/`declineRequest`/`cancelRequest`/`remindRequest`,
+`createBill`/`payBill`/`getBill`/`cancelBill`, `freeze`/`unfreeze`. You're
+writing scenario bodies only, in the exact shape `sim/scenarios/happy.ts`
+already demonstrates (read it first — `ctx.transfer`/`ctx.freshUsers`/
+`ctx.expectEq` and the auto-step-up retry pattern all transfer directly).
 
 ## What to build
 
-**New step-up rule**: sending to a recipient whose `reputation_score < config.reputationStepUpThreshold`
-(already added to `config.ts`, default `30`) requires step-up **regardless
-of amount** — same mechanism as the existing first-time-recipient check,
-just a different ledger fact and a different `reason` string.
+Two new files, same shape as `sim/scenarios/happy.ts` / `idempotency.ts`:
 
-In `TransfersService.transfer` (`modules/ledger/transfers/transfers.service.ts`),
-alongside the existing first-time-recipient and amount-threshold
-`requireStepUp` calls:
+### `sim/scenarios/disputes.ts` — tag `disputes`
+- **DIS-01**: raise a dispute on a completed transfer, admin resolves
+  `REVERSE`, assert the reversal actually moved money back (balances) and
+  `GET /disputes` shows `state: 'REVERSED'` — mirrors your own
+  `test-antigravity.js` but over real HTTP with the JWT + AdminGuard path.
+- **DIS-02**: admin resolves `REJECT` — no money moves, dispute closes
+  `REJECTED`.
+- **DIS-03**: `409 DISPUTE_ALREADY_OPEN` on a second raise while one is
+  `OPEN`.
+- **DIS-04**: `403 NOT_A_PARTY` when a third user tries to raise a dispute
+  on someone else's transaction.
+- **DIS-05** (bonus, only if time): after a `REVERSE`, spot-check both
+  parties' `ledger.v_user_reputation` score dropped — ties this round back
+  to Round 3's feature, and only needs one extra query via `ctx.adminPool`.
 
-```ts
-const repRes = await t.query(
-  `SELECT reputation_score FROM ledger.v_user_reputation WHERE user_id = $1`,
-  [receiver.id],
-);
-const receiverScore = repRes.rows[0]?.reputation_score ?? 50; // no row yet = brand new user, neutral default
-if (receiverScore < config.reputationStepUpThreshold) {
-  requireStepUp({ userId: senderId, token: stepUpToken, reason: 'LOW_REPUTATION_RECIPIENT', always: true });
-}
-```
+### `sim/scenarios/bills.ts` — tag `bills`
+- **BILL-01**: create a 3-share bill, all three payers pay their own share
+  (each via `ctx.client.payBill`, handling the first-time-recipient 403 →
+  step-up → retry the same way `sim/scenarios/happy.ts` HAP-05 does — copy
+  that pattern verbatim), assert the bill auto-`SETTLED` the instant the
+  last share pays.
+- **BILL-02**: `422 SELF_TRANSFER` when a share's phone is the creator's
+  own.
+- **BILL-03**: a payer can only pay their *own* share — attempt
+  `payBill` as a non-participant, assert it's rejected (check the actual
+  error your controller returns for this case first, don't guess the code).
+- **BILL-04**: `cancelBill` before any share is paid succeeds; after at
+  least one share is paid, assert it's rejected (check your own
+  `bills.service.ts#cancel` for the exact CAS condition and error).
 
-Run this check **inside the same transaction, before `moveMoney`** — same
-placement as the first-time-recipient check, so it's evaluated against a
-consistent read. Apply the identical pattern to **`BillsService.pay`** and
-**`RequestsService.pay`** (checking the score of whoever is receiving the
-money — the bill's `created_by` / the request's `requester_id`) — this
-rule is general to "sending money to someone," not specific to plain
-transfers, and those two paths already have their own `requireStepUp`
-calls for the amount threshold that this slots in next to.
+Every scenario gets the universal invariant check for free from
+`runScenario` (`sim/harness/runner.ts`) — don't re-check
+conservation/drift/negative yourself, same discipline as every existing
+scenario file.
 
-**Do not** add this check to `ReversalCoreService.applyReversal` or the
-HOLD settle/cancel paths — those move money back to someone who already
-had it, there's no new counterparty to vet.
+## Wiring in
 
-## A judgment call worth making explicitly
-
-A brand-new user has no rows in `ledger.v_user_reputation`'s underlying
-aggregates yet (zero completed transactions, zero disputes) — the view's
-`COALESCE`s mean they'd still get a real computed score (base 50 + a
-sliver of tenure), not `NULL`, so the `?? 50` fallback above is a
-belt-and-suspenders case that shouldn't normally trigger. If you find it
-*does* trigger in testing, that's worth flagging — it would mean the view
-isn't matching a user row for some reason, which is a real bug, not
-expected behavior.
-
-## Conventions — unchanged from Rounds 1 & 2
-
-Same `requireStepUp` helper, same "idempotency claim first, CAS not
-read-check-write, reuse `LedgerWriterPort`" shape. This round doesn't touch
-`moveMoney` at all — it's purely an additional check before calling it.
+Export `disputeScenarios: Scenario[]` and `billScenarios: Scenario[]` (same
+naming convention as `happyScenarios`/`idempotencyScenarios`). Claude will
+wire them into `sim/run.ts`'s `GROUPS` map once they land — you don't need
+to touch `run.ts` yourself (avoids a merge on the one shared file), but do
+run them locally first via a quick temporary import if you want to see
+green before pushing.
 
 ## Ownership boundaries
 
-**Yours**: `modules/ledger/transfers/transfers.service.ts`,
-`modules/ledger/bills/bills.service.ts`,
-`modules/ledger/requests/requests.service.ts` (all three already yours).
-**Not yours**: `modules/query/**` (Codex, exposing the read side of the
-same feature), `infra/sql/005_reputation_claude.sql` (already written and
-applied by Claude).
+**Yours (new)**: `sim/scenarios/disputes.ts`, `sim/scenarios/bills.ts`.
+**Not yours**: `sim/run.ts` (Claude wires it in), `sim/harness/**`
+(already has everything you need — if you find something genuinely
+missing on the client, flag it in your build log rather than editing
+`client.ts` yourself, since Claude/other agents may be mid-edit on it).
 
 ## Verifying your work
 
-Extend (or copy the shape of) your existing test scripts: seed a user,
-manufacture a low score for them (easiest: raise and REVERSE a couple of
-disputes against them via the existing `DisputesService`, or just seed one
-directly with several `REVERSED` disputes involving them), then attempt a
-transfer to them without a step-up token and assert `403
-STEP_UP_REQUIRED` with `reason: 'LOW_REPUTATION_RECIPIENT'`; retry with a
-valid step-up token and assert it succeeds. Check the three invariant
-views after, same as every round:
-
-```sql
-SELECT * FROM ledger.v_conservation;      -- total_paisa must always be 0
-SELECT * FROM ledger.v_balance_drift;     -- must always return 0 rows
-SELECT * FROM ledger.v_negative_accounts; -- must always return 0 rows
+```bash
+cd apps/api && npm run start:dev     # server must be up, same as always
+npm run sim -w sim -- --tag disputes
+npm run sim -w sim -- --tag bills
 ```
+Both must be 100% green with `Conservation held across all N scenarios.`
+in the summary line.
 
 ## Explicitly out of scope
 
 TOTP, the Kafka outbox relay/consumers, the Centrifugo bridge, Redis
-caching, one-payer-many-payees split, load testing, the simulator. Don't
-build these unless Claude asks.
+caching, one-payer-many-payees split, load testing. Don't build these
+unless Claude asks.

@@ -11,7 +11,7 @@ backend agent edits it a second time). Full context lives in
 monolith pivot, the reputation feature) and `API.md` (Bill Payment,
 Reputation sections).
 
-## Status — checked 2026-08-29 ~14:10, against `main` (post-merge, all pushed)
+## Status — checked 2026-08-29 ~15:10, against `main` (post-merge, all pushed)
 
 | Agent | Round | Status |
 |---|---|---|
@@ -19,16 +19,19 @@ Reputation sections).
 | Antigravity | Round 1: Disputes, Bill Payment 1:1, Shared Bill Payment | ✅ **done, verified** — `node scripts/test-antigravity.js` |
 | Antigravity | Round 2: HOLD / 60-second undo window | ✅ **done, verified** — `node scripts/test-antigravity-round2.js` |
 | DeepSeek | Round 1: core screen set in Stitch + `UI_SPEC.md` mapping | ✅ **done** — see `BUILD_LOG_DEEPSEEK.md` |
-| Codex | Round 2: expose `reputation` via `GET /users/lookup` | 🔵 assigned |
-| Antigravity | Round 3: `LOW_REPUTATION_RECIPIENT` step-up enforcement | 🔵 assigned |
+| Codex | Round 2: expose `reputation` via `GET /users/lookup` (+ admin endpoint) | ✅ **done, verified** — build clean, live `curl` matches the view exactly |
+| Antigravity | Round 3: `LOW_REPUTATION_RECIPIENT` step-up enforcement | ✅ **done, verified** — `node scripts/test-antigravity-round3.js`, 8/8 |
+| Claude | Wired `sim/harness/client.ts` + HAPPY/IDEMPOTENCY into `sim/run.ts`, found & fixed 3 real scenario bugs | ✅ **done** — `sim` is 19/19 |
 | DeepSeek | Round 2: reputation UI + backlog cleanup | 🔵 assigned |
+| Codex | Round 3: `sim/scenarios/validation.ts` (Auth/Query HTTP edge cases) | 🔵 assigned |
+| Antigravity | Round 4: `sim/scenarios/disputes.ts` + `bills.ts` (their own modules over real HTTP) | 🔵 assigned |
 
 **The whole backend boots and works end to end** — verified live: register
 (real signup-bonus ledger txn) → login → balance → lookup → step-up →
 transfer (plain + HOLD/undo) → reversals → disputes (+ admin resolve) →
-money requests → shared bills → admin integrity, conservation holding
-throughout. `sim/`'s LEDGER invariant group (`LED-01..07`) is green against
-the live database.
+money requests → shared bills → admin integrity → reputation (read +
+enforcement), conservation holding throughout. `sim/` now drives real HTTP,
+not just SQL: **LEDGER 7/7, HAPPY 6/6, IDEMPOTENCY 6/6 — 19/19, 0 failed.**
 
 ## New feature this round: Reputation
 
@@ -46,18 +49,27 @@ step-up copy variant). See each agent's task file for specifics — deliberately
 non-overlapping files, no new integration point needed beyond what already
 exists.
 
-## Assignments
+## Assignments — current round
 
 | Agent | Scope | Task file |
 |---|---|---|
-| Codex | `GET /users/lookup` reputation field (+ optional admin reputation endpoint) | `TASKS_CODEX.md` |
-| Antigravity | Reputation step-up rule in Transfers/Bills/Requests | `TASKS_ANTIGRAVITY.md` |
+| Codex | `sim/scenarios/validation.ts` — Auth/Query HTTP edge cases (bad PIN, token reuse, 404 lookup, non-admin 403, duplicate register) | `TASKS_CODEX.md` |
+| Antigravity | `sim/scenarios/disputes.ts` + `bills.ts` — their own modules exercised over real HTTP (guards, step-up, DTO validation) for the first time | `TASKS_ANTIGRAVITY.md` |
 | DeepSeek | Reputation indicator across Send/Request/Bill screens + Dashboard frozen state + History reversal row | `TASKS_DEEPSEEK.md` |
 
-Codex and Antigravity depend, read-only, on `apps/api/src/modules/ledger/core/*`
-and `packages/shared`. DeepSeek's track (Stitch + `UI_SPEC.md`) never
-touches `apps/api/**` or `frontend/**` — zero file overlap with the backend
-agents by construction.
+Both backend agents are writing pure scenario files against a client
+(`sim/harness/client.ts`) that already has every method they need — no new
+endpoints, no shared-file contention. Claude wires each new scenario group
+into `sim/run.ts`'s `GROUPS` map once it lands (the one shared file,
+same as always). DeepSeek's track (Stitch + `UI_SPEC.md`) never touches
+`apps/api/**`, `frontend/**`, or `sim/**` — zero file overlap.
+
+## Previous round (reputation) — all done
+
+| Agent | Scope | Task file |
+|---|---|---|
+| Codex | `GET /users/lookup` reputation field (+ optional admin reputation endpoint) | `TASKS_CODEX.md` (superseded above) |
+| Antigravity | Reputation step-up rule in Transfers/Bills/Requests | `TASKS_ANTIGRAVITY.md` (superseded above) |
 
 ## Checklist
 
@@ -67,11 +79,12 @@ agents by construction.
 - [x] DeepSeek R1: core screen set + `UI_SPEC.md` Stitch mapping — done
 - [x] Claude: `apps/api` wired, live end-to-end smoke test, `sim/` LEDGER group — done
 - [x] Claude: reputation view + config + `API.md`/`UI_SPEC.md` contract — done
-- [ ] Codex R2: `reputation` field on `GET /users/lookup`
-- [ ] Antigravity R3: `LOW_REPUTATION_RECIPIENT` step-up in Transfers/Bills/Requests
+- [x] Codex R2: `reputation` field on `GET /users/lookup` — done, verified
+- [x] Antigravity R3: `LOW_REPUTATION_RECIPIENT` step-up in Transfers/Bills/Requests — done, verified (8/8)
+- [x] Claude: `sim/harness/client.ts` wired into `run.ts` + HAPPY/IDEMPOTENCY groups — done, 19/19, fixed 3 scenario bugs found along the way
 - [ ] DeepSeek R2: reputation UI + frozen-banner + history-reversal-row backlog items
-- [ ] End-to-end smoke test of Disputes/Bills/Requests over real HTTP (only tested via Antigravity's direct-DB scripts so far)
-- [ ] `sim/harness/client.ts` + `HAP`/`IDEM`/`VAL`/`CON` scenario groups
+- [ ] Codex R3: `sim/scenarios/validation.ts` (Auth/Query real-HTTP edge cases)
+- [ ] Antigravity R4: `sim/scenarios/disputes.ts` + `bills.ts` (their modules over real HTTP)
 - [ ] Frontend (`frontend/`, separate track, not covered by these task files): wire real API, including the new reputation field
 
 Update this file as each piece lands — it's the one place that should

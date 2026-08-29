@@ -4,15 +4,16 @@ import { runScenario } from './harness/runner';
 import { printReport, writeJsonReport, GroupResult } from './harness/report';
 import { Scenario } from './harness/types';
 import { ledgerScenarios } from './scenarios/ledger';
+import { happyScenarios } from './scenarios/happy';
+import { idempotencyScenarios } from './scenarios/idempotency';
 
 /**
  * CLI: `npm run sim -w sim -- [--only ID] [--tag TAG] [--json]`
  *
- * Only the LEDGER group is wired in so far — it's pure SQL and runs today
- * regardless of whether the app has finished booting. Every other group
- * (HAP/IDEM/VAL/CON/...) needs `harness/client.ts` (a typed HTTP client
- * against API.md) plus a live server, and gets added once Codex's
- * bootstrap is confirmed up — see CLAUDE_BUILD_LOG.md.
+ * LEDGER is pure SQL, no server needed. HAPPY and IDEMPOTENCY drive the
+ * real API via `harness/client.ts` and need `apps/api` running (see
+ * `simConfig.apiBaseUrl`, default http://localhost:3000). VAL/CON/... are
+ * still unclaimed — add them the same way once written.
  */
 
 interface Args {
@@ -33,6 +34,8 @@ function parseArgs(argv: string[]): Args {
 
 const GROUPS: Record<string, Scenario[]> = {
   ledger: ledgerScenarios,
+  happy: happyScenarios,
+  idempotency: idempotencyScenarios,
 };
 
 async function main() {
