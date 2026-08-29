@@ -72,8 +72,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 {[
                   { label: 'Dashboard', href: '/', icon: LayoutDashboard },
                   { label: 'Send Money', href: '/send', icon: Send },
-                  { label: 'Money Requests', href: '/requests', icon: ArrowDownLeft },
+                  { label: 'Bill Payment (1:1)', href: '/requests', icon: ArrowDownLeft },
+                  { label: 'Shared Bills', href: '/bills', icon: Send },
                   { label: 'History', href: '/history', icon: History },
+                  { label: 'My Disputes', href: '/disputes', icon: Activity },
                   { label: 'Ledger Integrity Proof', href: '/integrity', icon: Scale },
                   { label: 'Admin Disputes', href: '/admin/disputes', icon: Activity },
                   { label: 'System Health', href: '/admin', icon: Activity },

@@ -23,6 +23,7 @@ export type TxnKind =
   | 'SIGNUP_BONUS'
   | 'TRANSFER'
   | 'REQUEST_SETTLE'
+  | 'BILL_SHARE_SETTLE'
   | 'SPLIT'
   | 'HOLD_SETTLE'
   | 'HOLD_CANCEL'
@@ -133,6 +134,28 @@ export interface Dispute {
   created_at: string;
   resolved_at?: string | null;
   resolved_by?: number | null;
+}
+
+export type BillState = 'OPEN' | 'SETTLED' | 'CANCELLED';
+export type BillShareState = 'PENDING' | 'PAID' | 'CANCELLED';
+
+export interface BillShare {
+  id: number;
+  payer: { id: number; name: string; phone: string };
+  amount_paisa: number;
+  state: BillShareState;
+  settled_txn_id?: number | null;
+}
+
+export interface Bill {
+  id: number;
+  ref: string;
+  title: string;
+  total_amount_paisa: number;
+  state: BillState;
+  created_by: { id: number; name: string; phone?: string };
+  shares: BillShare[];
+  created_at: string;
 }
 
 export interface IntegrityCheckReport {

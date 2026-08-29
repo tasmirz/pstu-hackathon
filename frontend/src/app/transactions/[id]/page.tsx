@@ -109,7 +109,8 @@ export default function TransactionDetailPage({ params }: { params: Promise<{ id
       setTimeout(() => {
         setDisputeModalOpen(false);
         setDisputeSuccess(false);
-      }, 1500);
+        router.push('/disputes');
+      }, 1000);
     } catch (err: any) {
       setDisputeError(err.message || 'Failed to raise dispute');
     } finally {

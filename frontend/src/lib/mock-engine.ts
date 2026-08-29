@@ -5,6 +5,8 @@ import {
   LimitsResponse,
   MoneyRequest,
   Dispute,
+  Bill,
+  BillShare,
   IntegrityCheckReport,
   SystemHealth,
   SystemMetrics,
@@ -35,11 +37,12 @@ interface StoredState {
   entries: StoredLedgerEntry[];
   moneyRequests: MoneyRequest[];
   disputes: Dispute[];
+  bills: Bill[];
   notifications: NotificationItem[];
   idCounter: number;
 }
 
-const STORAGE_KEY = 'kinetic_ledger_mock_state_v1';
+const STORAGE_KEY = 'kinetic_ledger_mock_state_v2';
 
 function getInitialState(): StoredState {
   const users: Array<User & { pin: string }> = [
@@ -96,7 +99,6 @@ function getInitialState(): StoredState {
   ];
 
   // Accounts: SYSTEM_MINT is account #1.
-  // Each user has a USER account (#80 + user_id) and a HOLD account (#180 + user_id).
   const accounts: StoredAccount[] = [
     { id: 1, user_id: null, type: 'SYSTEM_MINT', balance: -23450000 },
     { id: 84, user_id: 42, type: 'USER', balance: 9750000 },
@@ -266,6 +268,79 @@ function getInitialState(): StoredState {
       last_attempt_error: 'INSUFFICIENT_FUNDS: Receiver balance is ৳400.00',
       created_at: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
     },
+    {
+      id: 10,
+      txn_id: 1041,
+      state: 'REVERSED',
+      reason: 'Typo in recipient phone number',
+      resolution: 'Confirmed recipient mismatch. Funds returned to sender account.',
+      raised_by: { id: 42, name: 'Rahim Ahmed', role: 'sender' },
+      transaction: {
+        id: 1041,
+        ref: 'TXN_01J8XJ11AA55443',
+        amount_paisa: 50000,
+        state: 'COMPLETED',
+        created_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+      },
+      counterparty: { id: 43, name: 'Karim Uddin' },
+      reversible_now: false,
+      created_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+      resolved_at: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+      resolved_by: 1,
+    },
+  ];
+
+  const bills: Bill[] = [
+    {
+      id: 5,
+      ref: 'BILL_01J9X998811',
+      title: 'Dinner at Kacchi Bhai',
+      total_amount_paisa: 80000,
+      state: 'OPEN',
+      created_by: { id: 42, name: 'Rahim Ahmed', phone: '+8801712345678' },
+      shares: [
+        {
+          id: 11,
+          payer: { id: 43, name: 'Karim Uddin', phone: '+8801798765432' },
+          amount_paisa: 40000,
+          state: 'PAID',
+          settled_txn_id: 1043,
+        },
+        {
+          id: 12,
+          payer: { id: 45, name: 'Nadia Sultana', phone: '+8801755667788' },
+          amount_paisa: 40000,
+          state: 'PENDING',
+          settled_txn_id: null,
+        },
+      ],
+      created_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+    },
+    {
+      id: 6,
+      ref: 'BILL_01J9X776622',
+      title: 'Office Fiber Internet Shared Bill',
+      total_amount_paisa: 120000,
+      state: 'OPEN',
+      created_by: { id: 44, name: 'Alam Hossain', phone: '+8801733445566' },
+      shares: [
+        {
+          id: 13,
+          payer: { id: 42, name: 'Rahim Ahmed', phone: '+8801712345678' },
+          amount_paisa: 60000,
+          state: 'PENDING',
+          settled_txn_id: null,
+        },
+        {
+          id: 14,
+          payer: { id: 43, name: 'Karim Uddin', phone: '+8801798765432' },
+          amount_paisa: 60000,
+          state: 'PAID',
+          settled_txn_id: 1042,
+        },
+      ],
+      created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+    },
   ];
 
   const notifications: NotificationItem[] = [
@@ -296,6 +371,7 @@ function getInitialState(): StoredState {
     entries,
     moneyRequests,
     disputes,
+    bills,
     notifications,
     idCounter: 2000,
   };
@@ -360,12 +436,10 @@ class MockEngine {
         if (txn.state === 'HELD' && txn.settle_after) {
           const settleTime = new Date(txn.settle_after).getTime();
           if (now >= settleTime) {
-            // Settle hold: move from HOLD account to Receiver USER account
             txn.state = 'COMPLETED';
             txn.can_cancel_until = null;
             txn.can_reverse = true;
 
-            // Update ledger legs
             const senderUser = this.state.users.find((u) => u.name === 'Rahim Ahmed') || this.state.users[0];
             const receiver = this.state.users.find((u) => u.phone === txn.counterparty?.phone);
 
@@ -414,7 +488,6 @@ class MockEngine {
     const userAcc: StoredAccount = { id: 80 + userId, user_id: userId, type: 'USER', balance: 10000000 };
     const holdAcc: StoredAccount = { id: 180 + userId, user_id: userId, type: 'HOLD', balance: 0 };
 
-    // Debit mint, credit user
     const mintAcc = this.state.accounts.find((a) => a.type === 'SYSTEM_MINT')!;
     mintAcc.balance -= 10000000;
 
@@ -480,7 +553,6 @@ class MockEngine {
     if (!user) {
       throw { status: 404, error: 'USER_NOT_FOUND', message: 'No user found' };
     }
-    // Return first name + last initial per API.md
     const parts = user.name.split(' ');
     const initialName = parts.length > 1 ? `${parts[0]} ${parts[parts.length - 1][0]}.` : parts[0];
 
@@ -489,7 +561,7 @@ class MockEngine {
       name: initialName,
       fullName: user.name,
       phone: user.phone,
-      is_first_time: user.id === 45, // Nadia is first time demo
+      is_first_time: user.id === 45,
     };
   }
 
@@ -555,17 +627,15 @@ class MockEngine {
       };
     }
 
-    // Step-up check (>৳20,000 or first time)
     if ((amountPaisa > 2000000 || receiver.id === 45) && !stepUpToken) {
       throw { status: 403, error: 'STEP_UP_REQUIRED', message: 'Step-up authentication required', details: { reason: 'FIRST_TIME_RECIPIENT' } };
     }
 
-    const isHold = amountPaisa >= 500000; // ৳5,000+ enters hold state
+    const isHold = amountPaisa >= 500000;
     const txnId = ++this.state.idCounter;
     const ref = `TXN_01J8_${Date.now()}`;
 
     if (isHold) {
-      // Deduct from USER acc, credit to HOLD acc
       senderUserAcc.balance -= amountPaisa;
       senderHoldAcc.balance += amountPaisa;
 
@@ -590,7 +660,6 @@ class MockEngine {
 
       this.state.transactions.unshift(txn);
       this.saveState();
-
       this.emit('txn.held', { txn });
 
       return {
@@ -600,7 +669,6 @@ class MockEngine {
         can_cancel_until: settleAfter,
       };
     } else {
-      // Immediate transfer
       senderUserAcc.balance -= amountPaisa;
       receiverUserAcc.balance += amountPaisa;
 
@@ -622,7 +690,6 @@ class MockEngine {
 
       this.state.transactions.unshift(txn);
       this.saveState();
-
       this.emit('txn.completed', { txn });
 
       return {
@@ -754,6 +821,163 @@ class MockEngine {
     return dispute;
   }
 
+  // --- SHARED BILLS (§11) ---
+
+  public async createBill(
+    creatorId: number,
+    title: string,
+    sharesInput: Array<{ phone: string; amount_paisa: number }>
+  ): Promise<Bill> {
+    const creator = this.state.users.find((u) => u.id === creatorId);
+    if (!creator) throw { status: 401, error: 'UNAUTHENTICATED', message: 'User not found' };
+
+    if (sharesInput.length < 2) {
+      throw { status: 400, error: 'VALIDATION_ERROR', message: 'A shared bill requires at least 2 shares.' };
+    }
+
+    const shares: BillShare[] = [];
+    let totalPaisa = 0;
+
+    for (const sh of sharesInput) {
+      if (sh.amount_paisa <= 0) {
+        throw { status: 400, error: 'VALIDATION_ERROR', message: 'Share amount must be greater than zero.' };
+      }
+      const payer = this.state.users.find((u) => u.phone === sh.phone.replace(/\s+/g, ''));
+      if (!payer) {
+        throw { status: 404, error: 'USER_NOT_FOUND', message: `No user found for ${sh.phone}` };
+      }
+      if (payer.id === creatorId) {
+        throw { status: 422, error: 'SELF_TRANSFER', message: 'You cannot add yourself as a payer share.' };
+      }
+
+      totalPaisa += sh.amount_paisa;
+      shares.push({
+        id: ++this.state.idCounter,
+        payer: { id: payer.id, name: payer.name, phone: payer.phone },
+        amount_paisa: sh.amount_paisa,
+        state: 'PENDING',
+        settled_txn_id: null,
+      });
+    }
+
+    const bill: Bill = {
+      id: ++this.state.idCounter,
+      ref: `BILL_01J9_${Date.now()}`,
+      title,
+      total_amount_paisa: totalPaisa,
+      state: 'OPEN',
+      created_by: { id: creator.id, name: creator.name, phone: creator.phone },
+      shares,
+      created_at: new Date().toISOString(),
+    };
+
+    this.state.bills.unshift(bill);
+    this.saveState();
+    this.emit('bill.created', { bill });
+
+    return bill;
+  }
+
+  public async getBills(userId: number, role: 'created' | 'owed'): Promise<Bill[]> {
+    if (role === 'created') {
+      return this.state.bills.filter((b) => b.created_by.id === userId);
+    } else {
+      return this.state.bills.filter((b) => b.shares.some((s) => s.payer.id === userId));
+    }
+  }
+
+  public async getBill(id: number): Promise<Bill> {
+    const bill = this.state.bills.find((b) => b.id === id);
+    if (!bill) throw { status: 404, error: 'BILL_NOT_FOUND', message: 'Bill not found' };
+    return bill;
+  }
+
+  public async payBillShare(payerId: number, billId: number) {
+    const bill = this.state.bills.find((b) => b.id === billId);
+    if (!bill) throw { status: 404, error: 'BILL_NOT_FOUND', message: 'Bill not found' };
+    if (bill.state !== 'OPEN') {
+      throw { status: 409, error: 'INVALID_STATE', message: 'Bill is already settled or cancelled.' };
+    }
+
+    const share = bill.shares.find((s) => s.payer.id === payerId);
+    if (!share) {
+      throw { status: 404, error: 'BILL_SHARE_NOT_FOUND', message: 'You have no share on this bill.' };
+    }
+    if (share.state === 'PAID') {
+      throw { status: 409, error: 'INVALID_STATE', message: 'Your share is already paid.' };
+    }
+
+    const payerUserAcc = this.state.accounts.find((a) => a.user_id === payerId && a.type === 'USER');
+    const creatorUserAcc = this.state.accounts.find((a) => a.user_id === bill.created_by.id && a.type === 'USER');
+
+    if (!payerUserAcc || !creatorUserAcc) {
+      throw { status: 500, error: 'INTERNAL_ERROR', message: 'Accounts missing' };
+    }
+
+    if (payerUserAcc.balance < share.amount_paisa) {
+      throw {
+        status: 402,
+        error: 'INSUFFICIENT_FUNDS',
+        message: `Not enough balance. You have ৳${(payerUserAcc.balance / 100).toFixed(2)}.`,
+      };
+    }
+
+    // Execute transfer
+    payerUserAcc.balance -= share.amount_paisa;
+    creatorUserAcc.balance += share.amount_paisa;
+
+    const txnId = ++this.state.idCounter;
+    const txn: Transaction = {
+      id: txnId,
+      ref: `TXN_01J9_SHARE_${Date.now()}`,
+      kind: 'BILL_SHARE_SETTLE',
+      state: 'COMPLETED',
+      amount_paisa: share.amount_paisa,
+      note: `Bill Share: ${bill.title}`,
+      counterparty: { id: bill.created_by.id, name: bill.created_by.name, phone: bill.created_by.phone || '' },
+      created_at: new Date().toISOString(),
+      can_reverse: false,
+      entries: [
+        { account_id: payerUserAcc.id, account_type: 'USER', amount_paisa: -share.amount_paisa },
+        { account_id: creatorUserAcc.id, account_type: 'USER', amount_paisa: share.amount_paisa },
+      ],
+    };
+
+    share.state = 'PAID';
+    share.settled_txn_id = txnId;
+
+    // If every share is paid, CAS bill to SETTLED
+    if (bill.shares.every((s) => s.state === 'PAID')) {
+      bill.state = 'SETTLED';
+    }
+
+    this.state.transactions.unshift(txn);
+    this.saveState();
+    this.emit('bill.share_paid', { bill, share, transaction: txn });
+
+    return {
+      transaction: txn,
+      balance_paisa: payerUserAcc.balance,
+      bill,
+    };
+  }
+
+  public async cancelBill(userId: number, billId: number) {
+    const bill = this.state.bills.find((b) => b.id === billId);
+    if (!bill) throw { status: 404, error: 'BILL_NOT_FOUND', message: 'Bill not found' };
+    if (bill.created_by.id !== userId) {
+      throw { status: 403, error: 'NOT_CREATOR', message: 'Only creator can cancel bill.' };
+    }
+
+    bill.shares.forEach((s) => {
+      if (s.state === 'PENDING') s.state = 'CANCELLED';
+    });
+    bill.state = 'CANCELLED';
+
+    this.saveState();
+    return bill;
+  }
+
   // --- MONEY REQUESTS ---
 
   public async createMoneyRequest(fromUserId: number, toPhone: string, amountPaisa: number, note?: string) {
@@ -789,7 +1013,6 @@ class MockEngine {
       throw { status: 409, error: 'INVALID_STATE', message: 'This request is no longer pending.' };
     }
 
-    // Execute transfer
     const res = await this.createTransfer(payerId, req.requester?.phone || '', req.amount_paisa, `Paid: ${req.note || 'Request'}`);
     req.state = 'PAID';
 
@@ -874,7 +1097,6 @@ class MockEngine {
   // --- ADMIN METHODS ---
 
   public async getIntegrityReport(): Promise<IntegrityCheckReport> {
-    // Conservation: sum of all entries must be 0
     let totalPaisa = 0;
     this.state.accounts.forEach((a) => {
       totalPaisa += a.balance;
@@ -940,7 +1162,6 @@ class MockEngine {
       return { dispute };
     }
 
-    // Action === REVERSE
     const txn = this.state.transactions.find((t) => t.id === dispute.txn_id);
     if (!txn) throw { status: 404, error: 'TXN_NOT_FOUND', message: 'Transaction not found' };
 
@@ -959,7 +1180,6 @@ class MockEngine {
       };
     }
 
-    // Execute reversal
     dispute.state = 'REVERSED';
     dispute.resolution = resolution;
     dispute.resolved_at = new Date().toISOString();

@@ -6,6 +6,7 @@ import {
   Transaction,
   MoneyRequest,
   Dispute,
+  Bill,
   IntegrityCheckReport,
   SystemHealth,
   SystemMetrics,
@@ -18,7 +19,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 
 class ApiClient {
   private accessToken: string | null = null;
-  private isMockMode: boolean = true; // Default to true so app works immediately; will probe real backend
+  private isMockMode: boolean = true;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -74,7 +75,6 @@ class ApiClient {
       });
 
       if (res.status === 401) {
-        // Attempt silent refresh
         const refreshed = await this.refreshToken();
         if (refreshed) {
           headers['Authorization'] = `Bearer ${this.accessToken}`;
@@ -101,7 +101,6 @@ class ApiClient {
       return res.json();
     } catch (err: any) {
       if (err.status) throw err;
-      // Network error or backend down -> fall back to mock
       console.warn('Real API unreachable, fallback to Mock Engine:', err);
       throw { status: 503, error: 'NETWORK_ERROR', message: 'Cannot connect to backend server' };
     }
@@ -129,7 +128,7 @@ class ApiClient {
     return false;
   }
 
-  // --- API METHODS (Mock + Real) ---
+  // --- API METHODS ---
 
   public async register(phone: string, name: string, pin: string): Promise<AuthResponse> {
     if (this.isMockMode) {
@@ -248,6 +247,63 @@ class ApiClient {
     });
   }
 
+  public async getDisputes(userId?: number): Promise<Dispute[]> {
+    if (this.isMockMode) {
+      return mockEngine.getDisputes(userId);
+    }
+    return this.request<Dispute[]>('/disputes');
+  }
+
+  // --- SHARED BILLS ---
+
+  public async createBill(creatorId: number, title: string, shares: Array<{ phone: string; amount_paisa: number }>) {
+    if (this.isMockMode) {
+      return mockEngine.createBill(creatorId, title, shares);
+    }
+    return this.request<Bill>('/bills', {
+      method: 'POST',
+      body: JSON.stringify({ title, shares }),
+    });
+  }
+
+  public async getBills(userId: number, role: 'created' | 'owed'): Promise<Bill[]> {
+    if (this.isMockMode) {
+      return mockEngine.getBills(userId, role);
+    }
+    return this.request<Bill[]>(`/bills/mine?role=${role}`);
+  }
+
+  public async getBill(id: number): Promise<Bill> {
+    if (this.isMockMode) {
+      return mockEngine.getBill(id);
+    }
+    return this.request<Bill>(`/bills/${id}`);
+  }
+
+  public async payBillShare(payerId: number, billId: number, idempotencyKey?: string, stepUpToken?: string) {
+    if (this.isMockMode) {
+      return mockEngine.payBillShare(payerId, billId);
+    }
+    const headers: Record<string, string> = {};
+    if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+    if (stepUpToken) headers['X-Step-Up-Token'] = stepUpToken;
+    return this.request<any>(`/bills/${billId}/pay`, {
+      method: 'POST',
+      headers,
+    });
+  }
+
+  public async cancelBill(userId: number, billId: number) {
+    if (this.isMockMode) {
+      return mockEngine.cancelBill(userId, billId);
+    }
+    return this.request<Bill>(`/bills/${billId}/cancel`, {
+      method: 'POST',
+    });
+  }
+
+  // --- MONEY REQUESTS ---
+
   public async createMoneyRequest(fromUserId: number, toPhone: string, amountPaisa: number, note?: string) {
     if (this.isMockMode) {
       return mockEngine.createMoneyRequest(fromUserId, toPhone, amountPaisa, note);
@@ -317,13 +373,6 @@ class ApiClient {
       return mockEngine.getMoneyRequests(userId, type);
     }
     return this.request<MoneyRequest[]>(`/money-requests/${type}`);
-  }
-
-  public async getDisputes(userId?: number): Promise<Dispute[]> {
-    if (this.isMockMode) {
-      return mockEngine.getDisputes(userId);
-    }
-    return this.request<Dispute[]>('/disputes');
   }
 
   public async getNotifications(): Promise<NotificationItem[]> {
