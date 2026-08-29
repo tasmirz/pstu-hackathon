@@ -14,15 +14,31 @@ export class LedgerWriterService implements LedgerWriterPort {
   ) {}
 
   async moveMoney(client: PoolClient, params: MoveMoneyParams): Promise<MoveMoneyResult> {
-    const { senderId, receiverId, amountPaisa, kind, note, parentTxnId, reversesTxnId, skipDailyLimitCheck } = params;
+    const {
+      senderId,
+      receiverId,
+      amountPaisa,
+      kind,
+      note,
+      parentTxnId,
+      reversesTxnId,
+      skipDailyLimitCheck,
+      senderAccountId: overrideSenderAccountId,
+      receiverAccountId: overrideReceiverAccountId,
+      state: overrideState,
+      settleAfter,
+      outboxTopic,
+    } = params;
 
     const [sender, receiver] = await Promise.all([
       this.users.findById(senderId, client),
       this.users.findById(receiverId, client),
     ]);
 
-    const senderAccountId = await this.accounts.getUserAccountId(client, senderId);
-    const receiverAccountId = await this.accounts.getUserAccountId(client, receiverId);
+    const senderAccountId =
+      overrideSenderAccountId ?? (await this.accounts.getUserAccountId(client, senderId));
+    const receiverAccountId =
+      overrideReceiverAccountId ?? (await this.accounts.getUserAccountId(client, receiverId));
 
     // Lock both accounts in ASCENDING id order — the whole deadlock strategy
     // (PLAN.md §3.2). Two concurrent transfers touching the same pair of
@@ -51,11 +67,23 @@ export class LedgerWriterService implements LedgerWriterPort {
     }
 
     const ref = newTxnRef();
+    const txnState = overrideState ?? 'COMPLETED';
     const txnRes = await client.query(
       `INSERT INTO ledger.transactions
-         (ref, kind, state, sender_id, receiver_id, amount, note, parent_txn_id, reverses_txn_id)
-       VALUES ($1, $2, 'COMPLETED', $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [ref, kind, senderId, receiverId, amountPaisa, note ?? null, parentTxnId ?? null, reversesTxnId ?? null],
+         (ref, kind, state, sender_id, receiver_id, amount, note, parent_txn_id, reverses_txn_id, settle_after)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+      [
+        ref,
+        kind,
+        txnState,
+        senderId,
+        receiverId,
+        amountPaisa,
+        note ?? null,
+        parentTxnId ?? null,
+        reversesTxnId ?? null,
+        settleAfter ?? null,
+      ],
     );
     const txn = txnRes.rows[0];
 
@@ -83,6 +111,7 @@ export class LedgerWriterService implements LedgerWriterPort {
         amount_paisa: txn.amount,
         note: txn.note,
         counterparty: { id: receiver.id, name: receiver.name, phone: receiver.phone },
+        settle_after: txn.settle_after,
         reverses_txn_id: txn.reverses_txn_id,
         created_at: txn.created_at,
       },
@@ -95,7 +124,9 @@ export class LedgerWriterService implements LedgerWriterPort {
 
     // Outbox, in the SAME commit — what makes the event durable even if the
     // process dies right after (PLAN.md §1.1 Decision 3).
-    await client.query(`INSERT INTO ledger.outbox (topic, payload) VALUES ('txn.completed', $1)`, [
+    const topic = outboxTopic ?? 'txn.completed';
+    await client.query(`INSERT INTO ledger.outbox (topic, payload) VALUES ($1, $2)`, [
+      topic,
       JSON.stringify({ ...response, sender_id: senderId }),
     ]);
 

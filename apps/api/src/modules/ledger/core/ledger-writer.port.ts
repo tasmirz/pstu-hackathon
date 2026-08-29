@@ -1,5 +1,5 @@
 import { PoolClient } from 'pg';
-import { EntryDto, TransactionDto, TxnKind } from '@pstu/shared';
+import { EntryDto, TransactionDto, TxnKind, TxnState } from '@pstu/shared';
 
 export interface MoveMoneyParams {
   senderId: number;
@@ -12,6 +12,11 @@ export interface MoveMoneyParams {
   /** REVERSAL/HOLD_SETTLE/HOLD_CANCEL/REFUND don't count against the
    * sender's daily send cap — they're compensating entries, not new spend. */
   skipDailyLimitCheck?: boolean;
+  senderAccountId?: number;
+  receiverAccountId?: number;
+  state?: TxnState;
+  settleAfter?: Date | string | null;
+  outboxTopic?: string;
 }
 
 export interface MoveMoneyResult {
