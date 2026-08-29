@@ -286,4 +286,43 @@ export const DIS_11: Scenario = {
   },
 };
 
-export const disputeScenarios: Scenario[] = [DIS_01, DIS_02, DIS_03, DIS_04, DIS_05, DIS_06, DIS_07, DIS_08, DIS_09, DIS_10, DIS_11];
+export const DIS_12: Scenario = {
+  id: 'DIS-12',
+  name: 'After REVERSE, both parties\' ledger.v_user_reputation score dropped',
+  tags: ['disputes', 'dispute', 'tier2'],
+  async run(ctx) {
+    // Ported from scenarios/disputes.ts (Antigravity R4) — the one check
+    // this file didn't already have. See CLAUDE_BUILD_LOG.md for why the
+    // two files were merged instead of run side by side.
+    const [a, b, admin] = await ctx.freshUsers(3, 'DIS12');
+    await ctx.makeAdmin(admin);
+
+    const repA1 = await ctx.adminPool.query(`SELECT reputation_score FROM ledger.v_user_reputation WHERE user_id = $1`, [a.user.id]);
+    const repB1 = await ctx.adminPool.query(`SELECT reputation_score FROM ledger.v_user_reputation WHERE user_id = $1`, [b.user.id]);
+    const scoreA1 = repA1.rows[0].reputation_score;
+    const scoreB1 = repB1.rows[0].reputation_score;
+
+    const txn = await ctx.transfer(a, b, 50_000);
+    const dispute = await ctx.client.raiseDispute(a.access_token, txn.body.transaction.id, 'Wrong account');
+
+    const su = await ctx.client.stepUp(admin.access_token, 'PIN', admin.pin);
+    await ctx.client.resolveDispute(
+      admin.access_token,
+      dispute.body.id,
+      'REVERSE',
+      'Approved reversal.',
+      ctx.uuid(),
+      su.body.step_up_token,
+    );
+
+    const repA2 = await ctx.adminPool.query(`SELECT reputation_score FROM ledger.v_user_reputation WHERE user_id = $1`, [a.user.id]);
+    const repB2 = await ctx.adminPool.query(`SELECT reputation_score FROM ledger.v_user_reputation WHERE user_id = $1`, [b.user.id]);
+    const scoreA2 = repA2.rows[0].reputation_score;
+    const scoreB2 = repB2.rows[0].reputation_score;
+
+    ctx.expect(scoreA2 < scoreA1, `sender reputation dropped: ${scoreA1} -> ${scoreA2}`);
+    ctx.expect(scoreB2 < scoreB1, `receiver reputation dropped: ${scoreB1} -> ${scoreB2}`);
+  },
+};
+
+export const disputeScenarios: Scenario[] = [DIS_01, DIS_02, DIS_03, DIS_04, DIS_05, DIS_06, DIS_07, DIS_08, DIS_09, DIS_10, DIS_11, DIS_12];
