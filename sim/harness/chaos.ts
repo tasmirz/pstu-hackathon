@@ -1,4 +1,13 @@
 import { execSync } from 'child_process';
+import { join } from 'path';
+
+// `docker compose` needs the compose file's directory as its cwd (or an
+// explicit -f/--project-directory) to find docker-compose.yml. This runs via
+// `npm run sim -w sim`, whose cwd is the `sim/` workspace package, not the
+// repo root where docker-compose.yml actually lives — without this, every
+// command below fails with "no configuration file provided" before it ever
+// touches a container.
+const REPO_ROOT = join(__dirname, '..', '..');
 
 /**
  * SIMULATOR.md §3 — container control. Wraps docker compose so scenarios can
@@ -19,7 +28,11 @@ export interface ChaosResult {
 }
 
 function compose(args: string): string {
-  return execSync(`docker compose ${args}`, { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' }).trim();
+  return execSync(`docker compose ${args}`, {
+    stdio: ['ignore', 'pipe', 'ignore'],
+    encoding: 'utf8',
+    cwd: REPO_ROOT,
+  }).trim();
 }
 
 function containers(): string[] {
@@ -72,8 +85,12 @@ export async function killAndRestart(service: string, waitMs = 1500): Promise<Ch
 export async function waitHealthy(service: string, attempts = 30, everyMs = 1000): Promise<boolean> {
   for (let i = 0; i < attempts; i += 1) {
     if (!hasContainer(service)) return false;
-    const status = compose(`ps --filter name=${service} --format {{.Status}}`);
-    if (status.includes('healthy') || status.includes('Up')) return true;
+    try {
+      const status = compose(`ps --filter name=${service} --format {{.Status}}`);
+      if (status.includes('healthy') || status.includes('Up')) return true;
+    } catch {
+      /* container mid-restart, e.g. between kill and up -d — keep polling */
+    }
     await new Promise((r) => setTimeout(r, everyMs));
   }
   return false;

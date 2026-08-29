@@ -7,6 +7,76 @@ new entries go in **this** file. Newest entry on top.
 
 ---
 
+## 2026-08-29 — Full sim sweep (68/81), deduped a dispute-scenario collision, fixed the chaos harness; Round 5 for Antigravity
+
+Pulled a burst of concurrent work: Antigravity's Round 4
+(`sim/scenarios/dispute.ts`/`bills.ts`/`requests.ts`, plus their own
+`disputes.ts` and controller `@HttpCode` fixes), Codex's merge of
+Auth/Query validation scenarios into `sim/scenarios/validation.ts`
+(`VAL-09..14`, 14/14 combined with the existing transfer ones), and a much
+bigger batch — `auth.ts`/`limits.ts`/`concurrency.ts`/`hold.ts`/
+`reversal.ts`/`chaos.ts` — landed in one go (`48acecc`, `4ee0c99`,
+`b4ed17c`, `0d33603`) covering essentially the rest of `SIMULATOR.md`'s
+scope at once. Both Codex and DeepSeek had also already written their own
+next-round task files directly (`TASKS_CODEX.md` Round 4, `TASKS_DEEPSEEK.md`
+Round 3) — read both, they're accurate and well-scoped, adopted as-is
+rather than duplicating the effort.
+
+**Found and fixed one real duplication**: `sim/scenarios/dispute.ts`
+(pre-existing, 11 scenarios, Tier 2 — raise/party/window/reject/reverse/
+failure-accounting/concurrent-resolve/audit-log) and Antigravity's R4
+`sim/scenarios/disputes.ts` (5 scenarios) both claimed ids `DIS-01..05`
+with different bodies, and only `dispute.ts` was wired into `run.ts`. Diffed
+them — `disputes.ts` was a strict subset except for one check `dispute.ts`
+didn't have (a spot-check that both parties' `ledger.v_user_reputation`
+score actually dropped after a `REVERSE`). Ported that one scenario into
+`dispute.ts` as `DIS-12`, deleted `disputes.ts`. No content lost, no id
+collision, one less file to keep in sync.
+
+**Fixed a real bug in the simulator's own chaos harness**:
+`sim/harness/chaos.ts` shells out to `docker compose`, but `npm run sim -w
+sim` runs with cwd `sim/`, not the repo root where `docker-compose.yml`
+lives — every chaos command was failing before it ever touched a
+container. Fixed by passing `cwd: REPO_ROOT` (computed via
+`join(__dirname, '..', '..')`) to `execSync`, and wrapped `waitHealthy`'s
+status check in a try/catch (it wasn't, so a mid-restart container that
+threw briefly on `docker compose ps` would crash the whole scenario instead
+of just retrying). `CHAOS` went from 0/3 to 2/3 — the remaining failure,
+`CHA-01` (kill Postgres exactly mid-transfer, assert the client sees an
+error), is inherently timing-flaky by what it's testing, not a bug.
+
+**Ran the full suite for the first time** against a rebuilt, restarted
+server:
+```
+LEDGER 7/7  HAPPY 6/6  IDEMPOTENCY 6/6  VALIDATION 14/14  REQUESTS 5/5
+DISPUTE 12/12  AUTH 4/4  BILLS 5/5  =  59/59
+CONCURRENCY 3/7  HOLD 3/5  REVERSAL 2/4  LIMITS 1/3  CHAOS 2/3
+```
+Skimmed every failure to classify scenario-drift vs. real bug before
+assigning anything: most of CONCURRENCY/HOLD/REVERSAL/LIMITS read as the
+same "written before the HOLD/undo-window and reputation step-up features
+existed" pattern already fixed twice this session (expects `201`, HOLD
+threshold correctly returns `202`; missing a step-up token before racing a
+first-time-recipient send) — but `CON-04` (concurrent cancel-vs-sweeper-
+settle on one HELD transfer reporting **both** `CANCELLED` and `COMPLETED`
+as having won) reads like it could be a genuine CAS gap, worth someone
+actually checking rather than assuming. Left the full triage-and-fix to
+Codex's own Round 4 brief (already correctly scoped for exactly this) —
+this needed diagnosis, not scenario tweaks I'd be guessing at.
+
+**New task for Antigravity (Round 5)**: `API.md` documents
+`GET /money-requests/incoming` and `/outgoing` — neither exists.
+`RequestsController` only has create/pay/decline/cancel/remind; there's no
+way to *list* your money requests at all, which means DeepSeek's
+already-designed Inbox/Outbox screens have nothing to bind to. Real,
+spec'd, unclaimed gap. Told them explicitly to stay out of
+`transfers.service.ts`/`reversals.service.ts` this round since Codex is
+actively fixing bugs there.
+
+Adopted Codex's and DeepSeek's self-written task files into
+`TASKS_CLAUDE.md`'s status table rather than rewriting them — they matched
+reality and there was no reason to duplicate the work of describing it.
+
 ## 2026-08-29 — Verified Codex R2 + Antigravity R3 live; wired sim's HTTP groups; found 3 real bugs (in the scenarios, not the app); new fast round for Codex + Antigravity
 
 Both agents delivered the reputation round to `origin/main` (Codex's

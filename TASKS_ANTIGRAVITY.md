@@ -1,106 +1,110 @@
-# Assignment: Antigravity — Round 4: Sim Coverage for Your Own Modules (fast)
+# Assignment: Antigravity — Round 5: `GET /money-requests/incoming` + `/outgoing`
 
-## Rounds 1–3 — done, verified, thank you
+## Rounds 1–4 — done, verified, thank you
 
-Disputes/Bill Payment/Shared Bill Payment (R1), HOLD/undo-window (R2), and
-`LOW_REPUTATION_RECIPIENT` step-up enforcement (R3) all verified live —
-R3's own `scripts/test-antigravity-round3.js` is 8/8 green, and Claude
-independently reran it plus the full `sim` suite (LEDGER 7/7, HAPPY 6/6,
-IDEMPOTENCY 6/6 — 19/19, conservation held) against the live server.
-Nothing here asks you to revisit that logic.
+Disputes/Bill Payment/Shared Bill Payment (R1), HOLD/undo (R2), reputation
+step-up enforcement (R3), and full HTTP simulator coverage for your own
+modules — `sim/scenarios/dispute.ts` (11/11), `bills.ts` (5/5), `requests.ts`
+(5/5) (R4) — all verified live by Claude, `sim` is 68/81 clean on
+non-chaos groups with the remaining failures already triaged to Codex
+(concurrency/hold/reversal/limits scenario-vs-real-bug sweep, `TASKS_CODEX.md`
+Round 4 — **not your file this round, avoid touching
+`transfers.service.ts`/`reversals.service.ts` while they're mid-fix**).
+
+Also: Claude noticed `sim/scenarios/disputes.ts` (your R4 delivery) and the
+pre-existing `sim/scenarios/dispute.ts` both claimed ids `DIS-01..05` with
+different bodies — merged the one thing `disputes.ts` had that `dispute.ts`
+didn't (the reputation-drop check, now `DIS-12` in `dispute.ts`) and removed
+`disputes.ts`. Nothing for you to do about it, just flagging so the history
+makes sense if you go looking for that file.
 
 ---
 
 ## The gap this round closes
 
-Every verification of Disputes/Requests/Bills so far — yours and Claude's —
-has gone through the **service classes directly**
-(`scripts/test-antigravity*.js` `require()`s `dist/modules/...` and calls
-`.pay()`/`.resolve()` etc. straight on the class). That's real and it's
-right for what it tested, but it means the **controller layer** — route
-guards (`JwtAuthGuard`, `AdminGuard`), `X-Step-Up-Token` header parsing,
-`Idempotency-Key` header handling, DTO validation — has never actually run
-for your modules. `sim/`'s HAPPY and IDEMPOTENCY groups now prove exactly
-that layer for Transfers (they hit real HTTP via `sim/harness/client.ts`).
-Your modules are the one place that layer is still unproven.
+`API.md` documents two endpoints that were never actually built:
 
-This is fast because **all the plumbing already exists** —
-`sim/harness/client.ts` already has every method you need:
-`raiseDispute`, `myDisputes`, `adminDisputes`, `resolveDispute`,
-`createRequest`/`payRequest`/`declineRequest`/`cancelRequest`/`remindRequest`,
-`createBill`/`payBill`/`getBill`/`cancelBill`, `freeze`/`unfreeze`. You're
-writing scenario bodies only, in the exact shape `sim/scenarios/happy.ts`
-already demonstrates (read it first — `ctx.transfer`/`ctx.freshUsers`/
-`ctx.expectEq` and the auto-step-up retry pattern all transfer directly).
+> **`GET /money-requests/incoming?state=`** · **`GET /money-requests/outgoing?state=`**
+> Expired requests are returned with `state: "EXPIRED"` and are **not**
+> silently omitted — a request that vanishes from the list reads as a bug.
+
+`RequestsController` today only has `POST /`, `POST /:id/pay`, `/decline`,
+`/cancel`, `/remind` — there is no way to *list* your money requests at all.
+This isn't cosmetic: DeepSeek's already-designed **Money Requests
+Inbox/Outbox** screens (`BUILD_LOG_DEEPSEEK.md`) have nothing to bind to
+without it, and it's the one piece of the money-requests feature actually
+missing against spec.
 
 ## What to build
 
-Two new files, same shape as `sim/scenarios/happy.ts` / `idempotency.ts`:
+Two new routes on `RequestsController` (`apps/api/src/modules/ledger/requests/`):
 
-### `sim/scenarios/disputes.ts` — tag `disputes`
-- **DIS-01**: raise a dispute on a completed transfer, admin resolves
-  `REVERSE`, assert the reversal actually moved money back (balances) and
-  `GET /disputes` shows `state: 'REVERSED'` — mirrors your own
-  `test-antigravity.js` but over real HTTP with the JWT + AdminGuard path.
-- **DIS-02**: admin resolves `REJECT` — no money moves, dispute closes
-  `REJECTED`.
-- **DIS-03**: `409 DISPUTE_ALREADY_OPEN` on a second raise while one is
-  `OPEN`.
-- **DIS-04**: `403 NOT_A_PARTY` when a third user tries to raise a dispute
-  on someone else's transaction.
-- **DIS-05** (bonus, only if time): after a `REVERSE`, spot-check both
-  parties' `ledger.v_user_reputation` score dropped — ties this round back
-  to Round 3's feature, and only needs one extra query via `ctx.adminPool`.
+- **`GET /money-requests/incoming?state=&limit=&cursor=`** — requests where
+  the caller is `payer_id` (money coming *to* them, i.e. they'd pay it).
+- **`GET /money-requests/outgoing?state=&limit=&cursor=`** — requests where
+  the caller is `requester_id` (money they're chasing).
 
-### `sim/scenarios/bills.ts` — tag `bills`
-- **BILL-01**: create a 3-share bill, all three payers pay their own share
-  (each via `ctx.client.payBill`, handling the first-time-recipient 403 →
-  step-up → retry the same way `sim/scenarios/happy.ts` HAP-05 does — copy
-  that pattern verbatim), assert the bill auto-`SETTLED` the instant the
-  last share pays.
-- **BILL-02**: `422 SELF_TRANSFER` when a share's phone is the creator's
-  own.
-- **BILL-03**: a payer can only pay their *own* share — attempt
-  `payBill` as a non-participant, assert it's rejected (check the actual
-  error your controller returns for this case first, don't guess the code).
-- **BILL-04**: `cancelBill` before any share is paid succeeds; after at
-  least one share is paid, assert it's rejected (check your own
-  `bills.service.ts#cancel` for the exact CAS condition and error).
+Same keyset-pagination shape as `GET /transactions`
+(`apps/api/src/modules/query/query.service.ts` — copy the `cursor`/`limit`/
+`next_cursor`/`has_more` pattern, id-descending). `state=` is an optional
+exact-match filter over `ledger.money_requests.state`
+(`PENDING`/`PAID`/`DECLINED`/`EXPIRED`/`CANCELLED`).
 
-Every scenario gets the universal invariant check for free from
-`runScenario` (`sim/harness/runner.ts`) — don't re-check
-conservation/drift/negative yourself, same discipline as every existing
-scenario file.
+**The lazy-expiry rule from `API.md` is the one part worth getting right**:
+a `PENDING` row past `expires_at` must come back as `state: "EXPIRED"` in
+the response — never omitted, and the DB row should actually flip to
+`EXPIRED` (not just be presented that way), consistent with
+`RequestsService.remind()`'s existing lazy-expiry check on read. Do this
+with one `UPDATE ... WHERE state = 'PENDING' AND expires_at <= now() ...
+RETURNING id` swept before the `SELECT` for the list (or a single
+`UPDATE ... RETURNING *` folded into the query) — same "CAS, not
+read-check-write" discipline as everywhere else, and it means a poller
+hitting this endpoint repeatedly is what actually keeps expiry current,
+no new cron/sweeper needed.
 
-## Wiring in
-
-Export `disputeScenarios: Scenario[]` and `billScenarios: Scenario[]` (same
-naming convention as `happyScenarios`/`idempotencyScenarios`). Claude will
-wire them into `sim/run.ts`'s `GROUPS` map once they land — you don't need
-to touch `run.ts` yourself (avoids a merge on the one shared file), but do
-run them locally first via a quick temporary import if you want to see
-green before pushing.
+Response shape per item — mirror the create response's fields plus enough
+to render a list row:
+```jsonc
+{ "id": 77, "state": "PENDING", "amount_paisa": 120000, "note": "for the ticket",
+  "counterparty": { "id": 43, "name": "Karim U.", "phone": "+8801798765432" },
+  "expires_at": "...", "reminded_at": null, "settled_txn_id": null, "created_at": "..." }
+```
+`counterparty` is the *other* party relative to which list it's in — the
+payer's name/phone on `incoming` isn't useful (that's the caller), so it's
+the requester's; symmetric on `outgoing`.
 
 ## Ownership boundaries
 
-**Yours (new)**: `sim/scenarios/disputes.ts`, `sim/scenarios/bills.ts`.
-**Not yours**: `sim/run.ts` (Claude wires it in), `sim/harness/**`
-(already has everything you need — if you find something genuinely
-missing on the client, flag it in your build log rather than editing
-`client.ts` yourself, since Claude/other agents may be mid-edit on it).
+**Yours**: `apps/api/src/modules/ledger/requests/requests.controller.ts`,
+`requests.service.ts` (both already yours). **Not yours right now**:
+`transfers.service.ts`, `reversals.service.ts` — Codex is actively fixing
+real bugs there this round (`TASKS_CODEX.md` R4); touching either risks a
+conflict on files that are mid-edit.
 
 ## Verifying your work
 
+Add scenarios to `sim/scenarios/requests.ts` (already yours from R4) —
+**REQ-06**: create a request, `GET .../outgoing` shows it `PENDING` for the
+requester and `GET .../incoming` shows it for the payer; **REQ-07**:
+manufacture an expired one (`UPDATE ledger.money_requests SET expires_at =
+now() - interval '1 day'` via `ctx.adminPool`, same trick
+`RequestsService.remind()`'s own test already uses) and confirm it comes
+back `state: "EXPIRED"` on both endpoints, not omitted, and the DB row
+actually flipped. Add the two client methods to `sim/harness/client.ts`
+(`incomingRequests`/`outgoingRequests`, same shape as `client.transactions`)
+— that file's a shared resource but these are pure additions, not edits to
+existing methods, so should merge cleanly.
+
 ```bash
-cd apps/api && npm run start:dev     # server must be up, same as always
-npm run sim -w sim -- --tag disputes
-npm run sim -w sim -- --tag bills
+cd apps/api && npm run start:dev
+npm run sim -w sim -- --tag requests
 ```
-Both must be 100% green with `Conservation held across all N scenarios.`
-in the summary line.
+Must stay 100% green, conservation held.
 
 ## Explicitly out of scope
 
 TOTP, the Kafka outbox relay/consumers, the Centrifugo bridge, Redis
-caching, one-payer-many-payees split, load testing. Don't build these
-unless Claude asks.
+caching, one-payer-many-payees split, load testing, chaos/Docker
+portability (Claude already fixed the compose-cwd bug in
+`sim/harness/chaos.ts`; CHA-01 stays a known-flaky timing test, not yours
+to chase). Don't build these unless Claude asks.
