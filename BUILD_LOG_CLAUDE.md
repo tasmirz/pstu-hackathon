@@ -174,6 +174,38 @@ normal account, no escrow) — no further app code this round. Delivered:
   idempotent too). Verified: `node scripts/apply-schema.js` runs 001→002→003
   clean from the current DB state.
 
+## Orchestration — Claude as master over Codex + Antigravity
+
+User is running two more agents against this repo: **Codex** and
+**Antigravity**. Claude coordinates: assigned each a disjoint slice of the
+remaining backend work as a standalone task file, so neither needs the
+other's live context to proceed.
+
+- `TASKS_CODEX.md` — bootstrap (`main.ts`/`app.module.ts`), `AuthModule`
+  (fully spec'd — code was deleted in the pivot, nothing on disk shows it),
+  `QueryModule`, admin integrity/freeze.
+- `TASKS_ANTIGRAVITY.md` — `DisputesService` (+ admin resolve, including the
+  two-phase "reversal attempt can roll back, failure-recording can't" shape
+  for §4.3), `RequestsService` (Bill Payment 1:1), `BillsService` (Shared
+  Bill Payment).
+- `TASKS_CLAUDE.md` — trimmed to a short master-coordination doc: the
+  assignment table, a status checklist, and the one integration point kept
+  off both agents' plates on purpose (`app.module.ts`, wired centrally once
+  both report their modules ready, so two agents editing the same DI wiring
+  file at once is structurally impossible rather than merely discouraged).
+
+Each task file states its own file-ownership boundary explicitly (down to
+which files can be created), points at the same shared, already-working
+primitives (`LedgerWriterPort`, `ReversalCoreService`, `packages/shared`)
+so nobody reimplements double-entry writing or idempotency handling, and
+lists the same "explicitly out of scope" set so neither agent wanders into
+deferred features (TOTP, Kafka relay, Centrifugo, Redis cache, HOLD/undo,
+simulator).
+
+Next: wait for Codex/Antigravity to report progress, then wire
+`app.module.ts` and run an end-to-end smoke test + the three invariant
+views.
+
 ## STOPPED HERE — user asked for a handoff mid-refactor
 
 `apps/api` does **not run yet** — `main.ts`, `app.module.ts`, and the
