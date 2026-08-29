@@ -1,109 +1,169 @@
 # PSTU Hackathon — Money Movement App
 
 **Services:** Auth Gateway · Txn Service · Read Service · Centrifugo · Redpanda · Postgres 16 + PgBouncer
-**Ledger:** double-entry, append-only · **Money:** BIGINT paisa · **Writes:** synchronous · **Events:** outbox → Kafka
+**Ledger:** double-entry, append-only, partitioned · **Money:** BIGINT paisa · **Writes:** synchronous · **Events:** outbox → Kafka
 
-Contest window 09:00–15:00. Clock below starts 10:00; if 09:00–10:00 is usable it goes to **Phase 1 buffer**, not to extra features.
+| File | What it is | Owner |
+|---|---|---|
+| `PLAN.md` | This file — architecture, schedule, priorities, defense | everyone |
+| `SCHEMA.sql` | Complete runnable schema, roles, integrity views | C |
+| `API.md` | Every endpoint, request/response shape, error code | B, D |
+| `UI_SPEC.md` | Every screen, state, and interaction | D |
 
----
-
-## Architecture
-
-```
-                         client
-                            │
-                  ┌─────────▼──────────┐
-                  │   Auth Gateway     │  RS256 JWT, PIN, TOTP step-up,
-                  │   schema: auth     │  rate limit, routing
-                  └─────────┬──────────┘
-              ┌─────────────┴──────────────┐
-              │ sync (money)               │ sync (queries)
-     ┌────────▼─────────┐         ┌────────▼─────────┐
-     │  Txn Service     │         │  Read Service    │
-     │  schema: ledger  │         │  SELECT-only     │
-     │  WRITE model     │         │  READ model      │
-     └────────┬─────────┘         └────────┬─────────┘
-              │                            │
-              │ ONE transaction:           │ getBalance  → primary
-              │ txn + entries +            │ getHistory  → replica seam
-              │ balances + outbox          │
-              ▼                            ▼
-       ┌──────────────────────────────────────────┐
-       │      Postgres 16   (via PgBouncer)       │
-       │      schemas: auth · ledger              │
-       └──────────────────┬───────────────────────┘
-                          │ outbox relay (SKIP LOCKED)
-                          ▼
-                  ┌───────────────┐
-                  │   Redpanda    │  txn.completed · txn.reversed · notify
-                  └───────┬───────┘
-                          ▼
-                  ┌───────────────┐
-                  │  Centrifugo   │──── WS ────▶ recipient's browser
-                  └───────────────┘
-```
-
-### The two decisions that define this design
-
-**1. Money commands are synchronous. Money facts are asynchronous.**
-
-A transfer is one HTTP call that returns a committed result — the new balance, or `InsufficientFunds`. It is never queued. Everything *downstream* of the commit (notifications, fraud scoring, statements, the WS push) rides Kafka off the outbox.
-
-> *"We don't put money commands on a queue. We put money facts on a queue. When we answer you, the transfer is committed and durable, or it never happened."*
-
-This is why the write path is not behind Kafka: an async write can't tell the user whether they have the funds, forces a pending-state UI, and makes command replay a double-spend risk. Queuing buys burst absorption, which PgBouncer already gives us on the connection side.
-
-**2. This is CQRS, not a saga. Say it that way.**
-
-There is no cross-service flow that can fail midway and needs compensating. Calling it a saga invites a question we'd lose. The correct name is **"an event-driven state machine with a transactional outbox."** The saga appears only past a single primary — see *Scaling* at the bottom — and saying *that* is the stronger answer.
-
-### Why the outbox table stays
-
-You cannot atomically commit to Postgres and publish to Kafka. "Publish right after commit" leaves a window where the transfer is durable but the event is lost forever — the read side and the recipient's notification silently never happen. The outbox row commits **in the same transaction as the money**; a relay drains it. It is also the answer to *"what if Redpanda dies?"* — transfers keep committing, events drain on recovery.
-
-### No projection, no cache
-
-The Read Service queries the same Postgres with **SELECT-only grants** — the ownership boundary is enforced by database permissions, not convention. We deliberately did not build a separate projection store.
-
-> *"Read and write are separate services on separate scaling curves. Here the read model and write model are the same shape — a projection earns its cost when they diverge, like a feed joining transfers to counterparty names. The events are already flowing for it; that's where it plugs in."*
-
-If a cache is added later: **invalidate, never update.** A consumer that `DEL`s a key degrades to one extra DB read on any lost/duplicate/out-of-order event. A consumer that writes values into the cache inherits duplicate-apply and cross-partition ordering bugs, and can hold a confidently wrong balance. Never cache the balance — it's a primary-key lookup already in `shared_buffers`, with the highest write rate and the highest correctness requirement in the system.
+Contest window **09:00–15:00**. The clock below starts at 10:00. If 09:00–10:00 turns out to be usable, that hour goes to **Phase 1 buffer** — not to extra features. Phase 1 running long is the single most likely way this day goes wrong, and an hour of slack there is worth more than any P1 feature.
 
 ---
 
-## Phase 0 — 10:00–10:25 · Setup (hard stop)
+# 1. Architecture
 
-**`docker compose pull` at 10:00, before anything else.** Six images on venue wifi is the #1 way to lose 20 minutes.
+```
+                                 client
+                                    │
+                        ┌───────────▼────────────┐
+                        │     Auth Gateway       │   RS256 JWT · PIN · TOTP step-up
+                        │     schema: auth       │   rate limit · routing
+                        └───────────┬────────────┘
+                    ┌───────────────┴────────────────┐
+                    │ sync (money)                   │ sync (queries)
+         ┌──────────▼───────────┐          ┌─────────▼────────────┐
+         │     Txn Service      │          │     Read Service     │
+         │     schema: ledger   │          │  SELECT-only on      │
+         │     WRITE model      │          │  ledger; owns notify │
+         └──────────┬───────────┘          └─────────┬────────────┘
+                    │                                │
+                    │  ONE transaction:              │  getBalance → primary
+                    │  txn + entries + balances      │  getHistory → replica seam
+                    │  + outbox, all-or-nothing      │
+                    ▼                                ▼
+         ┌────────────────────────────────────────────────────┐
+         │        Postgres 16          (apps via PgBouncer)   │
+         │        schemas: auth · ledger · notify             │
+         └────────────────────────┬───────────────────────────┘
+                                  │ outbox relay — FOR UPDATE SKIP LOCKED
+                                  ▼
+                        ┌──────────────────┐
+                        │    Redpanda      │  txn.completed · txn.reversed
+                        │  12–24 partitions│  txn.held · request.* · fraud.*
+                        └────────┬─────────┘
+                     ┌───────────┴────────────┐
+                     ▼                        ▼
+            ┌────────────────┐      ┌──────────────────┐
+            │  Centrifugo    │      │  notify consumer │
+            │  WS fan-out    │      │  (in Read Svc)   │
+            └───────┬────────┘      └──────────────────┘
+                    │ WS
+                    ▼
+            recipient's browser — balance updates live
+```
 
-- Repo created, first commit **pushed**
-- `API.md` written so frontend isn't blocked
-- `openssl genrsa -out private.pem 2048 && openssl rsa -in private.pem -pubout -out public.pem`
-- Roles:
-  - **A** — Txn Service. Owns the ledger and the transfer path *alone*.
-  - **B** — Auth Gateway, then features on top of A's ledger.
-  - **C** — infra, migrations, seeds, outbox relay, Centrifugo, load test, README.
-  - **D** — frontend against `API.md` mocks; wires Centrifugo last.
+## 1.1 The three decisions that define this system
+
+### Decision 1 — Money commands are synchronous. Money facts are asynchronous.
+
+A transfer is **one HTTP call that returns a committed result**: the new balance, or `INSUFFICIENT_FUNDS`. It is never queued. Everything downstream of the commit — notifications, fraud scoring, statements, the websocket push — rides Kafka off the transactional outbox.
+
+We considered putting the write path behind Kafka (client → gateway → Kafka → txn service) and rejected it for four concrete reasons:
+
+1. **The user would never learn whether their transfer worked.** The gateway would return `202 Accepted` with no result. Insufficient funds becomes an *asynchronous error* arriving over a websocket 300ms later. For an application whose brief is *"correct, reliable and trustworthy"*, "I pressed send and I don't know what happened" is the exact failure being tested.
+2. **It forces a pending-state UI**, plus a status-polling endpoint for when the socket is down, plus reconnect handling — all landing in Phase 4 where there is least time.
+3. **Command replay double-spends.** Replaying an *event* topic to rebuild a read model is safe. Replaying a *command* topic re-executes transfers. Kafka is at-least-once and the offset commits after the DB write, so redelivery on crash is the normal path — every redelivery would be a duplicate debit held back only by idempotency.
+4. **Partition count would become a permanent throughput ceiling.** A consumer processes its partition sequentially, so 12 partitions means at most 12 concurrent transfers, forever. A synchronous service with a 50-connection pool gives 50. Putting writes behind Kafka can *reduce* throughput while looking like it scales.
+
+> **Say it like this:** *"We don't put money commands on a queue. We put money facts on a queue. When we answer you, the transfer is committed and durable — or it never happened."*
+
+Burst absorption, the one real argument for async writes, is already handled: PgBouncer absorbs the connection burst, and the queue absorbs the fan-out work.
+
+### Decision 2 — This is CQRS, not a saga. Name it correctly.
+
+There is no cross-service flow here that can fail midway and require compensating. Money movement is one atomic Postgres transaction inside one service. Calling that a "saga" invites a question we would lose.
+
+> **The correct name is: "an event-driven state machine with a transactional outbox."**
+
+The saga appears only past a single primary — when sharding by `user_id` makes a cross-shard transfer impossible to do in one transaction. Saying *that* is a much stronger answer than claiming a pattern we didn't implement. See §7.
+
+### Decision 3 — The outbox table stays, even though we have Kafka.
+
+You **cannot** atomically commit to Postgres and publish to Kafka. "Publish right after commit" leaves a window where the transfer is durable but the process dies before the publish lands — the event is gone forever, the read side never learns about it, and the recipient is never notified. Silent, unrecoverable, invisible until someone reconciles.
+
+Kafka's transactional producer does not help: its exactly-once semantics are Kafka-to-Kafka and cannot span a Postgres commit.
+
+The outbox row commits **in the same transaction as the money**. A relay drains it with `FOR UPDATE SKIP LOCKED`. It is also the answer to *"what if Redpanda dies?"* — transfers keep committing, the outbox backs up, events drain on recovery. We demo this by killing the broker.
+
+## 1.2 No projection, no cache, no replica — but every seam is in place
+
+The Read Service queries the same Postgres with **SELECT-only grants**. The ownership boundary is enforced by database permissions, not by convention: `read_svc` is structurally incapable of writing to `ledger`.
+
+We deliberately did not build a separate projection store.
+
+> *"Read and write are separate services on separate scaling curves. Here the read model and the write model are the same shape — a projection earns its cost when they diverge, like a feed joining transfers to counterparty names. The events are already flowing for it; that's exactly where it plugs in."*
+
+A projection would have required: absolute-value application (never deltas — one duplicate event silently corrupts a balance forever), a per-account sequence guard (a transfer touches two accounts, so events for one account arrive across partitions **out of order**, and a stale event would overwrite a newer balance), and rebuild-from-topic with retention configured for it. That is a lot of failure surface whose worst case is *"the sender's balance doesn't move on stage."*
+
+**If a cache is added later: invalidate, never update.** A consumer that `DEL`s a key degrades to one extra DB read on any lost, duplicated, or out-of-order event. A consumer that *writes values* into the cache inherits every one of the bugs above and can hold a confidently wrong balance. And never cache the balance itself — it is a primary-key lookup already sitting in `shared_buffers`, with the highest write rate and the highest correctness requirement in the system.
+
+Streaming replication is likewise not built. It is 30 fiddly minutes, does nothing for a demo dataset, and its one visible effect on stage would be replica lag making the sender's balance look stale. What matters is that the routing decision exists in code:
+
+```ts
+class LedgerRepository {
+  constructor(private primary: Pool, private replica: Pool) {}
+  getBalance(userId) { return this.primary.query(...); }   // read-your-own-writes
+  getHistory(userId) { return this.replica.query(...); }   // stale-tolerant
+}
+```
+
+Both pools point at the same DSN today. *"The routing seam is in the repository; the replica is a connection string."* True, and stronger than a half-built replica.
+
+---
+
+# 2. Phase 0 — 10:00–10:25 · Setup (hard stop)
+
+**`docker compose pull` at 10:00, before anything else.** Six images on venue wifi is the single most common way to lose twenty minutes, and it runs in the background while everything below happens.
+
+### 2.1 Checklist
+
+- [ ] `docker compose pull` running
+- [ ] Repo created, first commit **pushed**
+- [ ] `SCHEMA.sql` applied — run as owner, **directly against :5432**
+- [ ] `API.md` committed so D is not blocked
+- [ ] RSA keypair: `openssl genrsa -out private.pem 2048 && openssl rsa -in private.pem -pubout -out public.pem`
+- [ ] `types.setTypeParser(20, ...)` in every service's bootstrap (see 2.4)
+- [ ] Seeded demo users: Rahim, Karim, Alam, plus an admin
+
+### 2.2 Roles
+
+| Who | Owns | First deliverable |
+|---|---|---|
+| **A** | Txn Service. The ledger and the transfer path, **alone**. | `POST /transfers` green by 12:00 |
+| **B** | Auth Gateway, then features on A's ledger. | login + JWT by 11:15 |
+| **C** | Infra, migrations, seeds, outbox relay, Centrifugo, load test, README. | compose up + schema applied by 10:25 |
+| **D** | Frontend against `API.md` mocks; wires real API from 13:00. | login + dashboard on mocks by 12:00 |
+
+**Only A touches `TransferService`.** Two people editing the money path concurrently is how a hackathon produces a ledger that doesn't balance at 14:30.
+
+### 2.3 docker-compose.yml
 
 ```yaml
 volumes:
   pgdata:            # NAMED VOLUME. Never bind-mount pgdata to D:\ on Windows —
-                     # fsync through Docker Desktop/WSL2 onto the Windows FS is a
-                     # perf cliff, and we run synchronous_commit=on deliberately.
+                     # fsync through Docker Desktop/WSL2 onto the Windows filesystem
+                     # is a severe perf cliff, and we run synchronous_commit=on
+                     # deliberately. Benchmarking on a bind mount would make us
+                     # conclude the ledger is slow when it is the filesystem.
 services:
   postgres:
     image: postgres:16
     volumes: [ "pgdata:/var/lib/postgresql/data" ]
-    ports: [ "5432:5432" ]          # migrations connect HERE, direct
+    ports: [ "5432:5432" ]          # migrations connect HERE, directly
     command: >
       postgres
         -c shared_buffers=2GB       # postmaster-context: ALTER SYSTEM + reload
-        -c max_wal_size=4GB         # would NOT apply it. Set it here.
+        -c max_wal_size=4GB         #   does NOT apply it. It must be set here.
         -c wal_compression=on
-        -c synchronous_commit=on
+        -c synchronous_commit=on    # deliberately ON — see §7
         -c commit_delay=2000        # MICROseconds = 2ms. A bet on group commit.
-        -c commit_siblings=5        # MEASURE IT ON/OFF. Quote the real number.
-  pgbouncer:  { ports: ["6432:6432"] }   # apps connect here
-  redpanda:   { }                        # 12 partitions per topic — see Scaling
+        -c commit_siblings=5        #   MEASURE IT ON/OFF. Quote the real number.
+  pgbouncer:  { ports: ["6432:6432"] }   # every app connects HERE
+  redpanda:   { }                        # 12–24 partitions per topic
   centrifugo: { ports: ["8000:8000"] }
 ```
 
@@ -114,340 +174,317 @@ max_client_conn = 10000
 default_pool_size = 50
 ```
 
-### Three database roles — the guarantees depend on this
+`commit_delay` only engages when at least `commit_siblings` other transactions are in flight. It is a *bet* on group commit paying for 2ms of added latency. **Measure it both ways in the load test.** If it doesn't help on this hardware, turn it off and say you measured it — that answer is worth more than the setting.
 
-`REVOKE` from a role that **owns** the table is meaningless. Migrations run as the owner; services connect as lower-privileged roles. This is also what makes "the Read Service cannot write" a fact rather than a claim.
-
-```sql
-CREATE ROLE txn_svc  LOGIN PASSWORD '...';
-CREATE ROLE read_svc LOGIN PASSWORD '...';
-
-GRANT USAGE ON SCHEMA ledger TO txn_svc, read_svc;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ledger TO txn_svc;
-
-GRANT SELECT, INSERT, UPDATE ON ledger.accounts, ledger.transactions,
-                                ledger.idempotency_keys, ledger.outbox TO txn_svc;
--- entries: INSERT + SELECT only. No UPDATE. No DELETE. Ever.
-GRANT SELECT, INSERT ON ledger.entries TO txn_svc;
-
--- Read Service is structurally incapable of writing.
-GRANT SELECT ON ALL TABLES IN SCHEMA ledger TO read_svc;
-```
-
-**Migrations connect to :5432 directly, never through PgBouncer** — most migration tools take a *session*-level advisory lock, which breaks under transaction pooling.
-
-### Driver rules (non-negotiable)
+### 2.4 Driver rules (non-negotiable)
 
 ```ts
 import { types } from 'pg';
 types.setTypeParser(20, (v: string) => parseInt(v, 10));   // int8 → number
 ```
 
-Without this, `pg` returns every BIGINT as a **string**: `balance - amount` → `NaN`, `balance + amount` → string concatenation. Silent money corruption, and the first thing that will bite you. `parseInt` is safe here — max paisa is 9.007e15 (≈ ৳90 trillion). Do **not** use `BigInt`: `JSON.stringify` throws on it and takes down every serializer at once.
+Without this line, `pg` returns **every BIGINT as a string**. `balance - amount` becomes `NaN`; `balance + amount` becomes string concatenation. It is silent money corruption and it is the first thing that will bite you.
 
-**No ORM on the PgBouncer connection.** Raw parameterized `pg` / `pg-promise` only. Prisma and TypeORM issue server-side prepared statements that break under `pool_mode = transaction`. LISTEN/NOTIFY is also unavailable — the outbox relay polls with `SKIP LOCKED`, which is what we want anyway.
+`parseInt` is safe here: max paisa is 9.007e15 ≈ ৳90 trillion. Do **not** reach for `BigInt` — `JSON.stringify` throws on BigInt values and would take down every response serializer at once.
 
-No architecture talk after 10:25.
+**No ORM on the PgBouncer connection.** Raw parameterized `pg` / `pg-promise` only. Prisma and TypeORM issue server-side prepared statements that break under `pool_mode = transaction`. `LISTEN`/`NOTIFY` and session-level advisory locks are also unavailable — which is why migrations go direct to :5432 and the outbox relay polls with `SKIP LOCKED` rather than listening.
+
+**No architecture discussion after 10:25.** The design is decided. Anything unresolved gets the simpler option.
 
 ---
 
-## Phase 1 — 10:25–12:00 · Ledger core (A) + minimal auth (B)
+# 3. Phase 1 — 10:25–12:00 · Ledger core (A) + auth (B)
 
-```sql
--- ============ schema: auth ============
-CREATE TABLE auth.users (
-  id BIGSERIAL PRIMARY KEY,
-  phone TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
-  pin_hash TEXT NOT NULL,                  -- bcrypt cost 10 (cost 12 ≈ 250ms,
-  totp_secret TEXT,                        --   would dominate the load test)
-  status TEXT NOT NULL DEFAULT 'ACTIVE',   -- ACTIVE | FROZEN
-  failed_pin_attempts INT NOT NULL DEFAULT 0, locked_until TIMESTAMPTZ,
-  token_version INT NOT NULL DEFAULT 0,    -- bump to revoke every session
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+Everything in this phase is **P0**. Nothing here is negotiable, and no P1 feature starts until the 12:00 checkpoint is green.
 
-CREATE TABLE auth.refresh_tokens (
-  id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES auth.users(id),
-  token_hash TEXT NOT NULL,                -- hashed, never raw
-  family_id TEXT NOT NULL,                 -- reuse of a consumed token → revoke family
-  consumed_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+Full DDL is in `SCHEMA.sql`. The essentials and *why* they exist:
 
--- ============ schema: ledger ============
-CREATE TABLE ledger.accounts (
-  id BIGSERIAL PRIMARY KEY,
-  user_id BIGINT,                          -- logical FK to auth.users, no cross-schema FK
-  type TEXT NOT NULL,                      -- USER | SYSTEM_MINT | HOLD
-  balance BIGINT NOT NULL DEFAULT 0,       -- CACHE of the ledger, never the truth
-  CONSTRAINT non_negative CHECK (type = 'SYSTEM_MINT' OR balance >= 0)
-);
--- HOLD is PER USER. A single shared HOLD row would be FOR UPDATE-locked by every
--- held transfer and would serialise the entire load test.
-CREATE UNIQUE INDEX ON ledger.accounts (user_id, type) WHERE user_id IS NOT NULL;
+### 3.1 What the database guarantees on its own
 
-CREATE TABLE ledger.transactions (
-  id BIGSERIAL PRIMARY KEY,
-  ref TEXT UNIQUE NOT NULL,                -- 'TXN_' || ULID, generated in app
-  kind TEXT NOT NULL,   -- TRANSFER | REQUEST_SETTLE | REVERSAL | REFUND | SIGNUP_BONUS
-  state TEXT NOT NULL,  -- PENDING | HELD | COMPLETED | CANCELLED | FAILED | REVERSED
-  sender_id BIGINT, receiver_id BIGINT,
-  amount BIGINT NOT NULL CHECK (amount > 0), note TEXT,
-  reverses_txn_id BIGINT REFERENCES ledger.transactions(id),
-  settle_after TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
--- A transaction can be reversed exactly once. Enforced by the DB, not by app code.
-CREATE UNIQUE INDEX one_reversal_per_txn
-  ON ledger.transactions (reverses_txn_id) WHERE kind = 'REVERSAL';
+| Guarantee | Mechanism | Why not in application code |
+|---|---|---|
+| Every transaction balances to zero | `assert_balanced()` deferred constraint trigger, ≥2 legs and `SUM = 0` | Fires at COMMIT, after all legs exist. Application code can be bypassed; a trigger cannot. |
+| The ledger is append-only | `REVOKE UPDATE, DELETE ON ledger.entries FROM txn_svc` | The app is *incapable* of editing history, not merely disinclined. Requires a separate owner role for migrations — a `REVOKE` from a table's owner is meaningless. |
+| No account goes negative | `CHECK (type = 'SYSTEM_MINT' OR balance >= 0)` | Covers HOLD and ESCROW too — this is what catches a double-settle of a held transfer. |
+| A transaction is reversed at most once | `CREATE UNIQUE INDEX ... WHERE kind = 'REVERSAL'` | An `if` statement two workers can both pass is not a constraint. |
+| A held transfer resolves once — settle **or** cancel, never both | `CREATE UNIQUE INDEX ... WHERE kind IN ('HOLD_SETTLE','HOLD_CANCEL')` | Same reason. |
+| Idempotency cannot leak across users | `PRIMARY KEY (user_id, key)` | A globally-unique key lets user A replay user B's cached response by guessing it. That is a data leak, not a collision. |
 
-CREATE TABLE ledger.entries (
-  id BIGSERIAL PRIMARY KEY,
-  txn_id BIGINT NOT NULL REFERENCES ledger.transactions(id),
-  account_id BIGINT NOT NULL REFERENCES ledger.accounts(id),
-  amount BIGINT NOT NULL,                  -- signed; negative = debit
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
--- MANDATORY: the deferred trigger below runs SUM(...) WHERE txn_id = ? once PER LEG.
--- Without this index that is a seq scan on every insert and the load test dies.
-CREATE INDEX ON ledger.entries (txn_id);
-CREATE INDEX ON ledger.entries (account_id, created_at DESC);
+**The `ledger.entries (txn_id)` index is mandatory.** `assert_balanced()` runs `SUM(...) WHERE txn_id = ?` once **per leg** at every commit. Without that index it is a sequential scan on every insert, and the load test collapses. This is the single easiest performance bug to ship and the hardest to diagnose at 13:30.
 
--- (user_id, key), NOT a global key: a globally-unique key lets user A replay user B's
--- cached response by guessing it. That is a data leak, not a collision.
-CREATE TABLE ledger.idempotency_keys (
-  user_id BIGINT NOT NULL, key TEXT NOT NULL,
-  request_hash TEXT NOT NULL, response JSONB,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (user_id, key)
-);
+**Partitioning:** `ledger.entries` is range-partitioned by month, with a `DEFAULT` partition so that one row with an unexpected `created_at` — a bad seed, clock skew, a demo running past midnight — cannot throw `no partition of relation found` mid-demo. The constraint trigger is attached **per partition**, not to the parent, because whether a partitioned parent accepts `CREATE CONSTRAINT TRIGGER` varies while a partition is an ordinary table and always does. `ledger.create_month_partition()` attaches it automatically; a partition without that trigger is a silent hole in the conservation guarantee.
 
-CREATE TABLE ledger.money_requests (
-  id BIGSERIAL PRIMARY KEY,
-  requester_id BIGINT NOT NULL, payer_id BIGINT NOT NULL,
-  amount BIGINT NOT NULL CHECK (amount > 0), note TEXT,
-  state TEXT NOT NULL DEFAULT 'PENDING',   -- PENDING|PAID|DECLINED|EXPIRED|CANCELLED
-  expires_at TIMESTAMPTZ, settled_txn_id BIGINT REFERENCES ledger.transactions(id),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX ON ledger.money_requests (payer_id, id DESC) WHERE state = 'PENDING';
-
-CREATE TABLE ledger.outbox (
-  id BIGSERIAL PRIMARY KEY, topic TEXT NOT NULL, payload JSONB NOT NULL,
-  processed_at TIMESTAMPTZ, attempts INT NOT NULL DEFAULT 0
-);
-CREATE INDEX ON ledger.outbox (id) WHERE processed_at IS NULL;   -- partial
-
-CREATE TABLE ledger.audit_log (
-  id BIGSERIAL PRIMARY KEY, actor_id BIGINT, action TEXT,
-  entity TEXT, entity_id BIGINT, before JSONB, after JSONB,
-  at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-```
-
-**Not partitioning `entries`.** It costs a PK that must carry the partition key, a `DEFAULT` partition to avoid `no partition of relation found` mid-demo, and — the real reason — uncertainty about whether `CREATE CONSTRAINT TRIGGER` is accepted on a partitioned parent, which is a 20-minute unknown at 10:30 sitting under our centrepiece guarantee. The scale answer is verbal: *"range-partition by month with pruning; we didn't build it for a demo dataset."*
-
-### The database enforces double-entry, not the service layer
-
-```sql
-CREATE OR REPLACE FUNCTION ledger.assert_balanced() RETURNS TRIGGER AS $$
-DECLARE s BIGINT; n INT;
-BEGIN
-  SELECT COALESCE(SUM(amount),0), COUNT(*) INTO s, n
-    FROM ledger.entries WHERE txn_id = NEW.txn_id;
-  IF n < 2 THEN RAISE EXCEPTION 'txn % has only % leg(s)', NEW.txn_id, n; END IF;
-  IF s <> 0 THEN RAISE EXCEPTION 'unbalanced txn %: sum=%', NEW.txn_id, s; END IF;
-  RETURN NULL;
-END $$ LANGUAGE plpgsql;
-
-CREATE CONSTRAINT TRIGGER entries_balanced
-  AFTER INSERT ON ledger.entries
-  DEFERRABLE INITIALLY DEFERRED     -- fires at COMMIT, once all legs exist
-  FOR EACH ROW EXECUTE FUNCTION ledger.assert_balanced();
-```
-
-A zero-leg transaction never fires this trigger at all — it also moves no money, and `/admin/integrity` covers it. Prove the trigger live: insert one unbalanced leg, watch `COMMIT` reject it.
-
-### Transfer — the whole money path, one transaction
+### 3.2 The transfer — the whole money path, one transaction
 
 ```ts
 async execute({ senderId, receiverId, amount, idemKey, note }) {
-  const reqHash = hash({ senderId, receiverId, amount });
+  const reqHash = sha256(canonical({ senderId, receiverId, amount }));
 
   return this.db.tx(async (t) => {
+    // ---- 1. Claim the idempotency key FIRST, before anything else happens.
     const claimed = await t.query(
       `INSERT INTO ledger.idempotency_keys(user_id,key,request_hash) VALUES ($1,$2,$3)
        ON CONFLICT (user_id,key) DO NOTHING RETURNING key`,
       [senderId, idemKey, reqHash]);
 
     if (!claimed.rowCount) {
-      // A concurrent duplicate blocks on the unique index until the first COMMIT,
-      // so `response` is populated by the time we read it.
+      // A concurrent duplicate BLOCKS on the unique index until the first
+      // transaction commits or rolls back, so `response` is populated by the
+      // time we read it. If the first one rolled back, we'd have won the claim.
       const prior = await t.query(
         `SELECT request_hash, response FROM ledger.idempotency_keys
           WHERE user_id=$1 AND key=$2`, [senderId, idemKey]);
-      // Same key, different payload = client bug or attack. Never replay it.
-      if (prior.rows[0].request_hash !== reqHash) throw new IdempotencyKeyReuse();  // 422
-      return prior.rows[0].response;                          // double-tap → one debit
+      // Same key, different payload = client bug or attack. NEVER replay it.
+      if (prior.rows[0].request_hash !== reqHash) throw new IdempotencyKeyReuse(); // 422
+      return prior.rows[0].response;                     // double-tap → ONE debit
     }
 
-    // Ascending account id: two concurrent A↔B transfers can never deadlock.
+    // ---- 2. Lock both accounts in ASCENDING id order.
+    // Two concurrent A↔B transfers acquire locks in the same order and
+    // therefore cannot deadlock. This is the whole deadlock strategy.
     const ids = [senderAcc, receiverAcc].sort((a, b) => a - b);
     await t.query(`SELECT id,balance FROM ledger.accounts
                     WHERE id = ANY($1) ORDER BY id FOR UPDATE`, [ids]);
-    if (senderBalance < amount) throw new InsufficientFunds();
 
+    // ---- 3. Business rules, now that balances are stable under our lock.
+    if (senderBalance < amount)     throw new InsufficientFunds();
+    if (senderStatus === 'FROZEN')  throw new AccountFrozen();
+    if (spentToday + amount > cap)  throw new DailyLimitExceeded();
+
+    // ---- 4. Write the money. Transaction, both legs, both balances.
     const txn = await t.query(`INSERT INTO ledger.transactions(...) RETURNING *`);
     await t.query(`INSERT INTO ledger.entries(txn_id,account_id,amount)
                    VALUES ($1,$2,$3),($1,$4,$5)`,
                   [txn.id, senderAcc, -amount, receiverAcc, amount]);
     await t.query(`UPDATE ledger.accounts SET balance=balance-$1 WHERE id=$2`, [amount, senderAcc]);
     await t.query(`UPDATE ledger.accounts SET balance=balance+$1 WHERE id=$2`, [amount, receiverAcc]);
+
+    // ---- 5. Outbox, in the SAME commit. This is what makes the event durable.
     await t.query(`INSERT INTO ledger.outbox(topic,payload) VALUES ('txn.completed',$1)`,
                   [JSON.stringify(txn)]);
+
+    // ---- 6. Store the response so a replay returns exactly this.
     await t.query(`UPDATE ledger.idempotency_keys SET response=$1
                     WHERE user_id=$2 AND key=$3`, [JSON.stringify(txn), senderId, idemKey]);
-    return txn;                                  // ← returned to the client, committed
+
+    return txn;   // ← returned to the client. Committed and durable, or thrown.
   });
 }
 ```
 
-### Every state transition is an atomic CAS — never read-check-write
+### 3.3 Every state transition is an atomic CAS — never read-check-write
 
 ```sql
 UPDATE ledger.transactions SET state='REVERSED'
  WHERE id=$1 AND state='COMPLETED' RETURNING *;
--- rowCount = 0 → someone already reversed/cancelled it. Abort, do not compensate.
+-- rowCount = 0 → someone already reversed or cancelled it. Abort. Do not compensate.
 ```
 
-Same for `HELD → COMPLETED` and `HELD → CANCELLED`. The conditional `UPDATE` *is* the lock; a `SELECT` then an `if` then an `UPDATE` is a double-spend waiting for two consumers.
+The conditional `UPDATE` **is** the lock. A `SELECT`, then an `if`, then an `UPDATE` is a double-spend waiting for two concurrent workers — and with Kafka redelivery in the system, two concurrent workers is the normal case, not a rare one. This applies to every transition: `HELD → COMPLETED`, `HELD → CANCELLED`, `COMPLETED → REVERSED`, and every `money_requests` transition.
 
-### Read Service routing — the replica seam
+### 3.4 Auth
 
-```ts
-class LedgerRepository {
-  constructor(private primary: Pool, private replica: Pool) {}
-  getBalance(userId) { return this.primary.query(...); }   // read-your-own-writes
-  getHistory(userId) { return this.replica.query(...); }   // stale-tolerant, keyset paged
-}
+Phone + PIN (**bcrypt cost 10** — cost 12 is ~250ms and would dominate the load test; note the tradeoff in the README) → RS256 JWT, 15-minute access token plus a rotating refresh token stored hashed.
+
+Presenting an **already-consumed** refresh token means it was stolen and replayed, so the entire token family is revoked — thief and legitimate user both logged out, which is the correct outcome. This demos in thirty seconds and most teams won't have it.
+
+Lockout after 5 failed PIN attempts. A 4-digit PIN is trivially brute-forced and a judge will probe exactly this.
+
+**No TOTP at login.** TOTP is a step-up mechanism for dangerous actions, not a login tax.
+
+### 3.5 Signup mints real money
+
+The ৳100,000 bonus is a **real double-entry transaction** (`kind: SIGNUP_BONUS`) debiting `SYSTEM_MINT`, in the same commit as the account creation. `SYSTEM_MINT` goes deeply negative, which is correct — it *is* the money supply — and `SUM(entries)` across the whole ledger stays exactly zero.
+
+Nothing in this system bypasses the ledger, including the money the system gives away. That sentence is worth saying out loud.
+
+### 3.6 Checkpoint 12:00 — a gate, not a suggestion
+
+Run all four. If any fails, **cut features, never cut this.**
+
+1. Two curl calls, same `Idempotency-Key` → **one** debit, identical response body twice.
+2. Same key, different amount → `422 IDEMPOTENCY_KEY_REUSE`.
+3. Insert one unbalanced leg by hand → rejected at `COMMIT` with the trigger's message.
+4. `UPDATE ledger.entries SET amount = 999 WHERE id = 1` as `txn_svc` → **permission denied**.
+
+---
+
+# 4. Phase 2 — 12:00–13:00 · Features
+
+Build strictly in this order. **Stop at the cut line when the clock says so, not when you feel behind.** Deciding what to drop at 12:50 under pressure is how teams drop the wrong thing.
+
+### 4.1 P1 — above the line (this is the demo)
+
+| # | Feature | Owner | Notes |
+|---|---|---|---|
+| 1 | **Outbox relay** | C | `WHERE processed_at IS NULL ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 100` → Redpanda. Many relays, no contention, no duplicates. |
+| 2 | **Centrifugo bridge** | C | Consume `txn.completed`, publish to the receiver's channel. Stock Redis-engine config — do not hand-roll WS. |
+| 3 | **Recipient name confirmation** | B+D | Typo protection. The single most common real-world money error. |
+| 4 | **Duplicate-send guard** | B+D | Same recipient + amount within 120s → *"you sent ৳500 to Rahim 90 seconds ago, send again?"* |
+| 5 | **Money requests** — create / approve / decline / cancel | B | Creating a request moves **no money**. A request is a message, not a debit. That consent boundary is the point. |
+| 6 | **Reversals** | A | New transaction, `kind: REVERSAL`, mirrored entries, CAS off `COMPLETED`. The original row is untouched forever. Say **"compensating transaction."** |
+| 7 | **Sweeper** | C | Resolves `HELD`/`PENDING` past deadline, expires stale requests. `SKIP LOCKED` so two instances cannot double-settle. Self-healing, not human-noticed. |
+| 8 | **Daily limit + velocity guard** | B | ৳50,000/day with visible remaining allowance; >10 txn/min → PIN re-entry. |
+| 9 | **Freeze / unfreeze** | B | Frozen accounts **still receive**; only sending is blocked. |
+| 10 | **Transaction detail showing both ledger legs** | D | Makes double-entry visible to a judge without opening the code. Nearly free — the data is already in the response. |
+
+**Centrifugo channel authorization is mandatory, not optional.** User A must not be able to subscribe to user B's channel. Centrifugo's user-limited channel form (`user#42`) plus a JWT connection token is the shortest path — **verify the exact syntax against the Centrifugo docs before wiring**, it is the one piece of third-party config in the stack.
+
+### 4.2 The 60-second undo window — the showpiece
+
+This is P1 and worth building, but it is also the most intricate thing on the list, so the design is fixed here and not improvised at 12:30.
+
+**A held transfer is two separately balanced transactions, never one three-legged one.**
+
+```
+Send ৳10,000 (above the ৳5,000 threshold)
+  TXN1  kind=TRANSFER  state=HELD
+        entries: sender −10,000 · HOLD(sender) +10,000        ← balanced, commits NOW
+        settle_after = now() + 60s
+
+The money has ALREADY left the sender. It cannot be double-spent. It has
+simply not arrived yet.
+
+  settle (sweeper, after 60s)          cancel (user taps Undo)
+  TXN2 kind=HOLD_SETTLE                TXN2' kind=HOLD_CANCEL
+    HOLD(sender) −10,000                 HOLD(sender) −10,000
+    receiver     +10,000                 sender       +10,000
+    parent_txn_id = TXN1                 parent_txn_id = TXN1
+    CAS TXN1 HELD → COMPLETED            CAS TXN1 HELD → CANCELLED
 ```
 
-**Both pools point at the same DSN today.** We are not building streaming replication — it's 30 fiddly minutes, does nothing for a demo dataset, and its one visible effect on stage would be replica lag making the sender's balance look stale. *"The routing seam is in the repository; the replica is a connection string."* True, and stronger than a half-built replica.
+Three independent things stop a double-settle:
+1. **CAS** — `WHERE id=$1 AND state='HELD'`; the loser updates 0 rows and aborts.
+2. **Row lock** — both paths `FOR UPDATE` the HOLD account, so they serialize.
+3. **`CHECK (balance >= 0)`** — HOLD is per-user and non-negative, so a second debit is rejected by the database even if the first two were somehow bypassed.
 
-**Signup** mints ৳100,000 from `SYSTEM_MINT`, which goes negative — correct, it *is* the money supply. The ledger still sums to zero.
+**HOLD accounts are per-user, never global.** A single shared HOLD row would be `FOR UPDATE`-locked by every held transfer in the system and would serialize the entire write path — the load test would collapse on that one row.
 
-**Auth:** phone + PIN (bcrypt cost 10) → RS256 JWT, 15-min access + rotating refresh stored hashed. Reuse of a consumed refresh token revokes the family. Lockout after 5 failed PINs — a 4-digit PIN is trivially brute-forced and judges will probe it. **No TOTP at login.**
+The sender's balance shows a separate **held** line while a transfer is in flight, so ৳10,000 leaving and not yet arriving never looks like missing money.
 
-### Checkpoint 12:00 — gate, not a suggestion
+### 4.3 P2 — below the line, only if genuinely ahead
 
-Two curl calls, same idempotency key → **one** debit. Same key, different amount → 422. One unbalanced leg → rejected at COMMIT. If this isn't green, cut features. Never cut this.
-
----
-
-## Phase 2 — 12:00–13:00 · Features, Read Service, Centrifugo
-
-Build in order. **Stop at the cut line when the clock says so, not when you feel behind.**
-
-**Above the line:**
-1. **Outbox relay** (C) — `SELECT ... WHERE processed_at IS NULL ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 100` → Redpanda. Many relays, no contention, no duplicates.
-2. **Centrifugo** (C) — consume `txn.completed`, publish to the receiver's channel. Use the stock Redis-engine config; do not hand-roll WS.
-   - **Per-user channel authorization is mandatory** — user A must not be able to subscribe to B's channel. Centrifugo's user-limited channel form (`ns:name#<userid>`) plus a JWT connection token is the shortest path; verify the exact syntax against the Centrifugo docs before wiring it.
-3. **Recipient name confirmation** before send — typo protection.
-4. **Duplicate-send guard** — *"you sent ৳500 to Rahim 90 seconds ago, send again?"*
-5. **Money requests** — approve / decline / expire. **Never auto-debit.** Approval runs the ordinary transfer path with `kind='REQUEST_SETTLE'` and a CAS on the request's own state.
-6. **Reversals** — never DELETE, never UPDATE. New txn, `kind='REVERSAL'`, `reverses_txn_id` set, mirrored entries, CAS from `COMPLETED`. Say **"compensating transaction."**
-7. Self-transfer block, zero/negative rejection.
-
-**Below the line — only if genuinely ahead:**
-8. Daily limits + velocity check (>10 txn/min → PIN re-entry).
-9. Freeze — frozen accounts receive but cannot send.
-10. **60-second undo window** above ৳5,000. The design that is safe: **two separately balanced transactions** — `sender → HOLD(sender)` commits immediately (money can't be double-spent), then `HOLD(sender) → receiver` at settle, or `HOLD(sender) → sender` on cancel. Both transitions CAS off `HELD`. Plus a sweeper using `SKIP LOCKED`. It is the most human-centred feature available and directly answers the brief's *"people using the application"* half — but it is the first thing to lose to the clock.
-11. **TOTP step-up.** Note the split before building it: the gateway can enforce **amount-threshold** step-up because it can see `amount`, but *"first-ever recipient"* is a ledger fact the gateway doesn't hold — that rule has to live in the Txn Service. Decide which rules ship; don't claim both.
+| Feature | Cost | Note |
+|---|---|---|
+| **TOTP step-up** | high | Enrolment QR, 8 hashed single-use backup codes, and per-(user, time-step) replay protection — a TOTP code is otherwise reusable inside its own 30s window. Note the split: the gateway can enforce **amount thresholds** because it can read `amount_paisa`, but *"first-ever recipient"* is a ledger fact the gateway does not hold and must live in the Txn Service. Ship one or the other; don't claim both. |
+| **Split bill** | low | One debit, N credits, one atomic transaction. `assert_balanced` covers 2 legs or 20 unchanged — genuinely nearly free, and it *demonstrates* that multi-leg double-entry was designed in rather than bolted on. Best value P2 item. |
+| **Hash-chain verifier** | medium | ~15 min, and judges remember it. A `prev_hash` column would force every insert to read the previous row's hash — a global serialization point that destroys write throughput. Instead a verifier walks the append-only log in id order **out-of-band** and checkpoints a rolling hash into `ledger.chain_checkpoints`. Same tamper detection, zero write-path cost. Being able to explain *why it's asynchronous* is worth more than the feature. |
+| Escrow to unregistered phone | medium | `ESCROW` account type exists in the schema; auto-refund via the same sweeper. |
+| Masked recipient name | low | Already resolved in `API.md`: first name + last initial. Full names leak the phonebook to number-enumeration; full masking defeats the recipient-confirmation screen, which only works if a human can recognise the wrong person. |
+| Scheduled transfer, statements, reminders, log-out-everywhere | low each | Pure garnish. |
+| Fraud velocity consumer | medium | The best justification for the Kafka consumer existing at all. |
 
 ---
 
-## Phase 3 — 13:00–13:45 · Proof
+# 5. Phase 3 — 13:00–13:45 · Proof
 
-This phase wins the judging. Protect it — it is worth more than anything below the Phase 2 cut line.
+**This phase wins the judging.** It is worth more than everything below the Phase 2 cut line combined. If Phase 2 is running late, take the time from Phase 2, not from here.
 
-- **Load test:** 200 accounts, 5,000 concurrent transfers in a ring (i → i+1). Assert **total supply unchanged** and **no negative USER balance**. Run it live. *Write this script during Phase 1* — authoring a load generator at 13:00 is where this goes wrong.
-- **Measure `commit_delay` on vs. off.** Print the TPS. Quote the measured number, never a round one.
-- **Crash test:** kill the Txn Service mid-load, restart. Nothing lost, no partial transfers. Then kill **Redpanda** — transfers keep committing, outbox backs up, events drain on recovery. That second one is the whole architecture argument in fifteen seconds.
-- **`/admin/integrity`** — live proof that `SUM(ledger.entries.amount) = 0`, every cached `accounts.balance` equals its ledger sum, and no USER account is negative.
-- Keyset pagination everywhere (`WHERE id < $cursor`, never `OFFSET`).
+### 5.1 The load test — run it live, never from a screenshot
 
----
+200 accounts, 5,000 concurrent transfers in a ring (i → i+1). Asserts **total supply unchanged** and **no negative balance**.
 
-## Phase 4 — 13:45–14:25 · UI (10% of marks)
+Write this script during **Phase 1**, not at 13:00. Authoring a load generator under time pressure is exactly where this goes wrong, and the assertion is also the fastest way to catch a ledger bug at 11:30 while there's still time to fix it.
 
-Login → dashboard → send with confirm step → request inbox → history → **Ledger Integrity page**.
+The ring topology is deliberate: each account is touched by exactly two concurrent transfers, which is maximum realistic contention without a single hot row. With ascending-id lock ordering it produces **zero deadlocks** — and "0 deadlocks across 5,000 concurrent transfers" is a number worth putting on screen.
 
-Two browser windows side by side: money leaves one, Centrifugo lands it live in the other. That's the best visual moment available — wire it even if something else is unfinished. Keep everything else plain.
+### 5.2 Measure, don't claim
 
----
+- **`commit_delay` on vs. off.** Print both TPS numbers. *"We measured 1,840/s"* beats any confident round figure, and *"we tried it and it didn't help on this hardware, so we turned it off"* is a better answer than either.
+- `GET /admin/metrics` — TPS, p95 latency, active locks, connection count, live during the run.
 
-## Phase 5 — 14:25–14:50 · Freeze
+### 5.3 The two crash tests
 
-README with the architecture diagram and design decisions. Seeded demo accounts. **Rehearse twice.** Push at 14:50 and stop.
+1. **Kill the Txn Service mid-load, restart.** Nothing lost, no partial transfers, ledger still balances.
+2. **Kill Redpanda.** Transfers keep committing. The outbox backs up. Bring it back — events drain and the notifications arrive late. *This is the entire architecture argument demonstrated in fifteen seconds*, and it is the most persuasive thing you will do all day.
 
-### Demo script — build backwards from this
-1. Send ৳2,500 A → B. Recipient name confirmation. *(the brief's own words)*
-2. Second window updates live over Centrifugo.
-3. Double-tap send with the same idempotency key → **one** debit.
-4. B requests ৳1,200 from A → A approves. *(the brief's other quote)*
-5. Reverse a transaction — the ledger grew, nothing was edited.
-6. Run the 5,000-transfer load test **live**. Total supply unchanged.
-7. Kill Redpanda. Transfers still work.
-8. Open `/admin/integrity`. Sum = 0.
+### 5.4 `GET /admin/integrity`
+
+Live proof that `SUM(ledger.entries.amount) = 0`, every cached balance equals its ledger-derived balance, no non-mint account is negative, and the hash chain verifies. On failure it must show the **actual numbers and offending account ids** — if this fails in front of a judge, showing exactly what broke is a far better recovery than a generic red X.
+
+### 5.5 `EXPLAIN ANALYZE` — partition pruning
+
+Screenshot a date-ranged history query showing only the relevant partition scanned. Proof, not assertion.
 
 ---
 
-## Scaling — the million-user answer
+# 6. Phase 4 — 13:45–14:25 · UI · and Phase 5 — 14:25–14:50 · Freeze
 
-Give it as a bottleneck ladder, in the order you'd actually hit them:
+Full screen-by-screen detail is in `UI_SPEC.md`. The one thing that matters: **two browser windows side by side, money leaves one, Centrifugo lands it live in the other.** Wire that even if something else is unfinished — it is the best visual moment available and it makes the entire event pipeline visible in two seconds.
+
+Phase 5: README with the architecture diagram and design decisions. Seeded demo accounts. **Rehearse the demo twice.** Push at 14:50 and stop.
+
+### The demo script — build backwards from this
+
+| # | Beat | Proves |
+|---|---|---|
+| 1 | Register → *"৳100,000 added"* | Even the bonus is double-entry |
+| 2 | Send ৳2,500, recipient name confirmation | *the brief's own words*; human-error design |
+| 3 | Second window updates live | Outbox → Kafka → Centrifugo, end to end |
+| 4 | Double-tap send, same idempotency key | One debit. Show both identical responses. |
+| 5 | Send ৳10,000 → 60s undo → cancel | Money conserved at every instant |
+| 6 | Alam requests ৳1,200 → Rahim approves | *the brief's other quote*; consent boundary |
+| 7 | Reverse a transaction | Ledger **grew**. Nothing was edited. |
+| 8 | Run the 5,000-transfer load test live | Supply unchanged, 0 deadlocks |
+| 9 | **Kill Redpanda. Transfers still work.** | Correct failure mode for payments |
+| 10 | `/admin/integrity` — sum = 0 | The invariant, on screen |
+
+---
+
+# 7. Defense
+
+## 7.1 Scaling — the million-user answer
+
+Give it as a **bottleneck ladder**, in the order you would actually hit them:
 
 | Wall | Fix | Built? |
 |---|---|---|
-| Connections (10k clients) | PgBouncer, transaction mode | ✅ |
+| Connections (10k concurrent clients) | PgBouncer, transaction mode, 10k → 50 backends | ✅ |
 | Fan-out work (notify, fraud, statements) | Outbox → Kafka → consumers | ✅ |
-| Read throughput | Replicas + repository routing seam | seam ✅, replica no |
-| **Write throughput, single primary** | ← **the real wall** | measured |
+| History table size (7B+ rows/yr) | Monthly range partitions; archiving is `DETACH`, a metadata op | ✅ |
+| Read throughput | Replicas + the repository routing seam | seam ✅, replica no |
+| **Write throughput, single primary** | ← **this is the real wall** | measured |
 | Hot-account contention | Shard `SYSTEM_MINT` into N; sub-accounts for hot merchants | designed |
 | Beyond one primary | Shard by `user_id`; cross-shard transfers go two-phase | design only |
 
 Two things make this better than every other team's answer:
 
-**Name the actual wall.** Scaling Txn Service instances buys nothing past the primary's commit ceiling — it just moves the queue. One primary with `synchronous_commit=on` lands in the low thousands of write transactions/sec and a transfer is ~6 row writes, so the ceiling is order-of-magnitude 1–3k transfers/sec. The load test gives you the real figure; *"we measured 1,840/s on a laptop"* beats any confident round number.
+**Name the actual wall.** Scaling Txn Service instances buys nothing past the primary's commit ceiling — it just moves the queue. One primary with `synchronous_commit=on` lands in the low thousands of write transactions/sec, and a transfer is ~6 row writes, so the ceiling is order-of-magnitude 1–3k transfers/sec. The load test gives the real figure. Quote **the measured number**, never a round one.
 
-**Name the contention, not just the throughput.** What bites first isn't total TPS — it's one hot row serializing on `FOR UPDATE`. Knowing the bottleneck is lock contention on specific accounts, rather than "we need more servers," is the difference between reading about scale and understanding it.
+**Name the contention, not just the throughput.** What bites first is not total TPS — it is one hot row serializing on `FOR UPDATE`. `SYSTEM_MINT` at signup is the obvious one; a popular merchant account would be the next. Knowing the bottleneck is *lock contention on specific rows* rather than *"we need more servers"* is the difference between reading about scale and understanding it.
 
-**And that's where the saga finally earns its name:** sharding by user means a cross-shard transfer can't be one transaction, so it becomes a genuine two-phase compensating flow. *"We didn't build it because it's the wrong complexity at our stage — but the ledger is already append-only and idempotent, which is what makes it possible."*
+**And that is where the saga finally earns its name.** Sharding by `user_id` means a cross-shard transfer cannot be one transaction, so it becomes a genuine two-phase compensating flow. *"We didn't build it because it is the wrong complexity at our stage — but the ledger is already append-only and idempotent, which is exactly what makes it possible."*
 
-One number to fix now: **give Redpanda 12–24 partitions per topic even with one consumer.** Partition count is the consumer-concurrency ceiling, and repartitioning later breaks ordering. It's the one setting here that's expensive to change.
+## 7.2 Deliberately not built — say this unprompted
 
----
+Real KYC, cash-in / cash-out, currency conversion, `synchronous_commit=off`, Citus, per-shard sequencers, a separate projection store, streaming replication.
 
-## SOLID
+Naming what you skipped **and why** reads as senior. Volunteering it before you're asked reads as confident.
 
-- **S** — controller does HTTP, service does rules, repository does SQL.
-- **O** — `TransferStrategy`: `P2PTransfer`, `RequestSettlement`, `Reversal`, `Refund`. New type = one new class, zero edits. Literally the "new features with less effort" criterion.
+## 7.3 SOLID
+
+- **S** — controller does HTTP, service does rules, repository does SQL. Nothing else.
+- **O** — `TransferStrategy`: `P2PTransfer`, `RequestSettlement`, `Reversal`, `Refund`, `SplitBill`, `HoldSettle`. A new money movement type is one new class and zero edits to existing ones. This is literally the *"new features with less effort"* criterion.
 - **L** — every strategy honours the same contract; the executor swaps them blindly.
-- **I** — `BalanceReader` and `LedgerWriter` are separate; reads don't inherit write methods.
-- **D** — repositories injected as interfaces. It's how primary/replica routing exists without business logic knowing.
+- **I** — `BalanceReader` and `LedgerWriter` are separate interfaces. Reads do not inherit write methods, which is why the Read Service can hold SELECT-only credentials.
+- **D** — repositories injected as interfaces. It is how primary/replica routing exists without business logic knowing anything about it.
 
-In the code: Repository, Strategy, State Machine, Transactional Outbox, CQRS, Factory, Middleware/Decorator.
+In the code: **Repository, Strategy, State Machine, Transactional Outbox, CQRS, Factory, Middleware/Decorator.**
 
----
-
-## Answers to have loaded
+## 7.4 Answers to have loaded
 
 | They ask | You say |
 |---|---|
 | Why isn't the write path on Kafka? | We don't queue money commands, we queue money facts. When we answer you, it's committed or it never happened. |
-| Why not a separate projection DB? | Read and write models are the same shape here. A projection earns its cost when they diverge; the events are already flowing for it. |
-| Is this a saga? | No — it's an event-driven state machine with a transactional outbox. The saga appears when we shard past one primary. |
 | Why keep an outbox if you have Kafka? | You can't atomically commit to Postgres and publish to Kafka. Without the outbox, a crash between the two loses the event forever. |
+| Is this a saga? | No — it's an event-driven state machine with a transactional outbox. The saga appears when we shard past one primary. |
+| Why not a separate projection DB? | Read and write models are the same shape here. A projection earns its cost when they diverge; the events are already flowing for it. |
 | Where's the truth? | `ledger.entries`. `accounts.balance` is a cache, and `/admin/integrity` proves they agree. |
 | Someone taps send twice? | Idempotency key scoped per user. Same payload replays the response; different payload is rejected 422. |
-| Deadlocks? | Locks always acquired in ascending account id. Two concurrent A↔B transfers cannot deadlock. |
-| What if Redpanda dies? | Transfers keep committing. The outbox backs up and drains on recovery. We'll show you. |
+| Deadlocks? | Locks always acquired in ascending account id. Two concurrent A↔B transfers cannot deadlock. 0 deadlocks in 5,000 concurrent transfers. |
+| What if Redpanda dies? | Transfers keep committing, outbox backs up, events drain on recovery. Let me show you. |
+| Why is `SYSTEM_MINT` negative? | It's the money supply. Negative is correct. The ledger still sums to exactly zero. |
 | Why `synchronous_commit = on`? | It's money. We'd rather be slower than lose a committed transfer — and we measured the cost. |
-| How do you know it's correct under load? | We don't assert it, we test it. 5,000 concurrent transfers, supply unchanged, live. |
+| Can you edit the ledger? | The application role has no UPDATE or DELETE on `entries`. Try it — permission denied. |
+| What if the receiver already spent it? | The reversal fails with insufficient funds and becomes a dispute. We don't fabricate money to undo a transfer. |
+| How do you know it's correct under load? | We don't assert it, we test it. 5,000 concurrent transfers, supply unchanged, live, right now. |
