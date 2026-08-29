@@ -91,11 +91,17 @@ export default function CreateBillPage() {
 
     api
       .lookupUser(cleaned)
-      .then((res) => {
+      .then((res: any) => {
         setRows((prev) =>
           prev.map((r) =>
             r.id === rowId
-              ? { ...r, resolvedName: res.name, lookupLoading: false, lookupError: undefined }
+              ? {
+                  ...r,
+                  resolvedName: res.name,
+                  reputation: res.reputation,
+                  lookupLoading: false,
+                  lookupError: undefined,
+                }
               : r
           )
         );
@@ -402,9 +408,31 @@ export default function CreateBillPage() {
                           row.lookupLoading ? (
                             <span className="text-[10px] text-outline animate-pulse">Checking...</span>
                           ) : row.resolvedName ? (
-                            <span className="text-xs font-bold text-emerald-800 flex items-center gap-1">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                              <span>{row.resolvedName}</span>
+                            <span className="text-xs font-semibold flex items-center gap-1.5">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                              <span className="font-bold text-on-surface">{row.resolvedName}</span>
+                              {row.reputation && (
+                                <span
+                                  className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold border ${
+                                    row.reputation.tier === 'GOOD'
+                                      ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                                      : row.reputation.tier === 'FAIR'
+                                      ? 'bg-blue-50 text-blue-800 border-blue-300'
+                                      : 'bg-amber-50 text-amber-900 border-amber-300'
+                                  }`}
+                                >
+                                  <span
+                                    className={`w-1 h-1 rounded-full ${
+                                      row.reputation.tier === 'GOOD'
+                                        ? 'bg-emerald-500'
+                                        : row.reputation.tier === 'FAIR'
+                                        ? 'bg-blue-500'
+                                        : 'bg-amber-500'
+                                    }`}
+                                  />
+                                  <span>{row.reputation.tier === 'GOOD' ? 'Good' : row.reputation.tier === 'FAIR' ? 'Fair' : 'Low'}</span>
+                                </span>
+                              )}
                             </span>
                           ) : row.lookupError ? (
                             <span className="text-[10px] text-error flex items-center gap-1">
