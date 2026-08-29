@@ -12,10 +12,7 @@
     "infra:down": "docker compose down",
     "infra:logs": "docker compose logs -f",
     "db:apply": "node scripts/apply-schema.js",
-    "db:seed": "node scripts/seed.js",
-    "dev:auth": "npm run start:dev -w apps/auth-gateway",
-    "dev:txn": "npm run start:dev -w apps/txn-service",
-    "dev:read": "npm run start:dev -w apps/read-service",
+    "dev": "npm run start:dev -w apps/api",
     "sim": "npm run sim -w sim",
     "build": "npm run build -ws --if-present"
   },
