@@ -80,3 +80,39 @@ export async function getBalance(adminPool: Pool, accountId: number): Promise<nu
   const { rows } = await adminPool.query(`SELECT balance FROM ledger.accounts WHERE id = $1`, [accountId]);
   return rows[0]?.balance ?? 0;
 }
+
+/**
+ * SIMULATOR.md §2 `--reset`: truncate the ledger and auth data and re-seed so
+ * the demo board runs against a clean system. Everything user-created goes;
+ * SYSTEM_MINT and the structural grants stay. Conservation is restored by the
+ * first signup (register mints from SYSTEM_MINT), so a clean board is also a
+ * green board.
+ */
+export async function resetForCleanRun(adminPool: Pool): Promise<void> {
+  const client = await adminPool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`DELETE FROM ledger.bill_shares`);
+    await client.query(`DELETE FROM ledger.bills`);
+    await client.query(`DELETE FROM ledger.disputes`);
+    await client.query(`DELETE FROM ledger.money_requests`);
+    await client.query(`DELETE FROM ledger.idempotency_keys`);
+    await client.query(`DELETE FROM ledger.outbox`);
+    await client.query(`DELETE FROM ledger.chain_checkpoints`);
+    await client.query(`DELETE FROM ledger.audit_log`);
+    await client.query(`DELETE FROM ledger.entries`);
+    await client.query(`DELETE FROM ledger.transactions`);
+    await client.query(`DELETE FROM ledger.accounts WHERE type <> 'SYSTEM_MINT'`);
+    await client.query(`UPDATE ledger.accounts SET balance = 0 WHERE type = 'SYSTEM_MINT'`);
+    await client.query(`DELETE FROM auth.refresh_tokens`);
+    await client.query(`DELETE FROM auth.users`);
+    await client.query(`DELETE FROM ledger.limit_overrides`);
+    await client.query(`SELECT setval('auth.users_id_seq', 1, false)`);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}

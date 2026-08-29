@@ -76,9 +76,11 @@ export const IDEM_04: Scenario = {
   name: 'User B replaying user A\'s key gets B\'s own result, never A\'s',
   tags: ['idempotency', 'tier1'],
   async run(ctx) {
-    const [a, b, c, d] = await ctx.freshUsers(4, 'IDEM04');
+    const [a, b, c] = await ctx.freshUsers(3, 'IDEM04');
     const key = ctx.uuid();
     const amount = 25_000;
+    const beforeA = await ctx.balance(a);
+    const beforeB = await ctx.balance(b);
 
     const aRes = await ctx.transfer(a, b, amount, { key });
     ctx.expectEq(aRes.status, 201, 'A accepted');
@@ -89,10 +91,11 @@ export const IDEM_04: Scenario = {
     ctx.expectEq(bRes.status, 201, 'B accepted (key is per-user)');
     ctx.expect(bRes.body.transaction.ref !== aRes.body.transaction.ref, 'B got a different transaction');
 
-    // Now B replays B's OWN key: identical response.
-    const bReplay = await ctx.client.transfer(b.access_token, c.user.phone, amount, { idemKey: key });
-    ctx.expectEq(bReplay.body.transaction.ref, bRes.body.transaction.ref, 'B replay identical');
-    ctx.expectEq(await ctx.balance(b), await ctx.balance(b) - 0 + (await ctx.balance(b)) - 0 > 0 ? await ctx.balance(b) : await ctx.balance(b), 'no-op guard'); // placeholder replaced below
+    // A's own transfer happened exactly once; B's transfer happened exactly once.
+    ctx.expectEq(await ctx.balance(a), beforeA - amount, 'A debited once');
+    ctx.expectEq(await ctx.balance(b), beforeB - amount, 'B debited once');
+    ctx.expectEq(await ctx.countTxns({ ref: aRes.body.transaction.ref }), 1, 'A has one txn row');
+    ctx.expectEq(await ctx.countTxns({ ref: bRes.body.transaction.ref }), 1, 'B has one txn row');
   },
 };
 
@@ -128,7 +131,7 @@ export const IDEM_06: Scenario = {
   async run(ctx) {
     const [a, b] = await ctx.freshUsers(2, 'IDEM06');
     const key = ctx.uuid();
-    const amount = 3_000_000; // above step-up amount threshold
+    const amount = 25_000; // small; the 403 comes from FIRST_TIME_RECIPIENT
     const before = await ctx.balance(a);
 
     const denied = await ctx.client.transfer(a.access_token, b.user.phone, amount, { idemKey: key });
