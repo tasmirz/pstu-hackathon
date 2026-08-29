@@ -21,6 +21,38 @@ each module only ever touches its own pool, so splitting back into
 separate processes later is "swap a DI provider for an HTTP call," not a
 rewrite. Full reasoning: `BUILD_LOG_CLAUDE.md`'s "Pivot" entry.
 
+### Architecture diagram (from `PLAN.md` §1)
+
+```mermaid
+flowchart TB
+    subgraph Clients
+        Client["client (browser / simulator)"]
+    end
+
+    Client -->|"RS256 JWT · PIN · TOTP step-up · rate limit"| AG["Auth Gateway<br/>schema: auth"]
+
+    AG -->|"sync (money)"| TXN["Txn Service<br/>schema: ledger<br/>WRITE model"]
+    AG -->|"sync (queries)"| READ["Read Service<br/>SELECT-only on ledger; owns notify"]
+
+    READ <--> Redis["Redis cache<br/>version-keyed"]
+
+    TXN -->|"ONE transaction: txn + entries + balances + outbox,<br/>all-or-nothing"| PG["Postgres 16 (apps via PgBouncer)<br/>schemas: auth · ledger · notify"]
+    READ -->|"getBalance → primary<br/>getHistory → replica seam"| PG
+
+    PG -->|"outbox relay — FOR UPDATE SKIP LOCKED"| RP["Redpanda<br/>12–24 partitions<br/>txn.completed · txn.reversed · txn.held · request.* · fraud.*"]
+
+    RP --> CF["Centrifugo<br/>WS fan-out"]
+    RP --> Consumer["consumer (in Read Svc)<br/>writes notifications<br/>INCRs Redis cache version"]
+
+    CF -->|"WS"| Recipient["recipient's browser — balance updates live"]
+```
+
+The diagram is the *target architecture* from `PLAN.md` §1. What runs today
+is the same thing collapsed into one process: the boxes on the left half are
+`AuthModule` / `LedgerModule` / `QueryModule` / `NotificationsModule` in one
+Nest app, and the Redpanda/Centrifugo side of the diagram is the future
+outbox relay + WS bridge (see `KAFKA_WS_DEPLOYMENT_SEAMS.md`).
+
 ## Why it's built this way
 
 The core engineering bet, everywhere: **money is a fact recorded twice,
@@ -308,6 +340,7 @@ flowchart LR
 | `UI_SPEC.md` | Every screen, state, and interaction (Stitch mocks referenced by screen id) |
 | `SIMULATOR.md` | The scenario harness spec |
 | `EXTRA_FEATURES_AUDIT_AND_DESIGN.md` | Gap analysis against the actual scoring rubric |
+| `KAFKA_WS_DEPLOYMENT_SEAMS.md` | How the current code is already separated (3 DB roles/pools, outbox, notify, Centrifugo token) so a Kafka/WebSocket split is a deploy change, not a rewrite |
 | `TASKS_CLAUDE.md` / `TASKS_CODEX.md` / `TASKS_ANTIGRAVITY.md` / `TASKS_DEEPSEEK.md` | Multi-agent coordination — current status and assignments |
 | `BUILD_LOG_CLAUDE.md`, `BUILD_LOG_ANTIGRAVITY.md`, `BUILD_LOG_DEEPSEEK.md` | Running narrative logs, newest entry on top |
 

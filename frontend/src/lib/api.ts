@@ -62,6 +62,10 @@ class ApiClient {
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    if (!this.accessToken && typeof window !== 'undefined') {
+      this.accessToken = sessionStorage.getItem('kinetic_access_token');
+    }
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(options.headers as Record<string, string>),

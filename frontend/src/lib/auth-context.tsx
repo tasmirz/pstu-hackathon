@@ -60,11 +60,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!user) return;
     try {
       const res: BalanceResponse = await api.getBalance(user.id);
-      setBalance(res.balance_paisa);
-      setHeldBalance(res.held_paisa);
-      setAvailableBalance(res.available_paisa);
-    } catch (err) {
-      console.error('Failed to refresh balance', err);
+      if (res && typeof res.balance_paisa === 'number') {
+        setBalance(res.balance_paisa);
+        setHeldBalance(res.held_paisa ?? 0);
+        setAvailableBalance(res.available_paisa ?? res.balance_paisa);
+      }
+    } catch (err: any) {
+      // 401 unauthenticated happens transiently on cold load before session restore
+      if (err?.status === 401) {
+        return;
+      }
+      console.warn('Balance refresh deferred:', err?.message || err);
     }
   }, [user]);
 
