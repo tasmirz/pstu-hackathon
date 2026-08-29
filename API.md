@@ -71,6 +71,9 @@ When step-up is required and absent, the endpoint returns `403 STEP_UP_REQUIRED`
 | 403 | `DAILY_LIMIT_EXCEEDED` | Would exceed the daily send cap |
 | 404 | `USER_NOT_FOUND` / `TXN_NOT_FOUND` | — |
 | 409 | `INVALID_STATE` | CAS failed — already settled/cancelled/reversed |
+| 409 | `DISPUTE_ALREADY_OPEN` | A dispute is already open on that transaction |
+| 403 | `NOT_A_PARTY` | Only the sender or receiver may dispute a transaction |
+| 422 | `DISPUTE_WINDOW_CLOSED` | Transaction is older than the 7-day dispute window |
 | 422 | `IDEMPOTENCY_KEY_REUSE` | Same key, different payload |
 | 422 | `SELF_TRANSFER` | Sender == receiver |
 | 423 | `ACCOUNT_LOCKED` | Too many failed PIN attempts |
@@ -236,9 +239,17 @@ The payer approves. Runs the ordinary transfer path with `kind: REQUEST_SETTLE`,
 ### `POST /disputes`
 ```jsonc
 // → { "txn_id": 1043, "reason": "Sent to the wrong number" }
-// ← 201 { "id": 12, "state": "OPEN", ... }
+// ← 201 { "id": 12, "txn_id": 1043, "state": "OPEN", "created_at": "..." }
+// ← 409 DISPUTE_ALREADY_OPEN     // partial unique index, not an if-statement
+// ← 403 NOT_A_PARTY              // only sender or receiver may dispute
+// ← 422 DISPUTE_WINDOW_CLOSED    // transaction older than 7 days
 ```
-One open dispute per transaction, enforced by a partial unique index.
+Either party to the transaction may raise a dispute. One **open** dispute per transaction, enforced by a partial unique index — a closed dispute may later be superseded by a new one.
+
+Raising a dispute moves **no money** and does not freeze the transaction. It creates a work item for an admin.
+
+### `GET /disputes` — the raiser's own view
+`{ "items": [ { "id": 12, "txn_id": 1043, "state": "OPEN", "reason": "...", "resolution": null } ], ... }`
 
 ---
 
@@ -317,6 +328,7 @@ On failure, each block returns the **actual numbers and offending account ids** 
 { "db": { "ok": true, "latency_ms": 1.2 },
   "pgbouncer": { "ok": true, "cl_active": 34, "sv_active": 8, "pool_size": 50 },
   "kafka": { "ok": true, "consumer_lag": 0 },
+  "redis": { "ok": true, "hit_rate": 0.82, "keys": 1204 },
   "outbox": { "unprocessed": 0, "dead_letter": 0, "oldest_unprocessed_age_s": null } }
 ```
 
@@ -339,8 +351,44 @@ On failure, each block returns the **actual numbers and offending account ids** 
 ### `POST /admin/accounts/:id/rebuild-balance`
 Recomputes the cached balance from ledger entries. `{ "before_paisa": ..., "after_paisa": ..., "drift_paisa": 0 }` — recovery you can actually run on stage.
 
-### `POST /admin/disputes/:id/resolve`  **step-up**
-`{ "action": "REVERSE" | "REJECT", "resolution": "..." }` — resolution text is mandatory.
+### `GET /admin/disputes?state=OPEN&limit=&cursor=` — the admin queue
+Each row embeds enough to decide without a second call: the disputed transaction, both parties, the reason, and whether a reversal is currently possible.
+```jsonc
+{ "items": [ {
+    "id": 12, "state": "OPEN", "reason": "Sent to the wrong number",
+    "raised_by": { "id": 42, "name": "Rahim A.", "role": "sender" },
+    "transaction": { "id": 1043, "ref": "TXN_01J8...", "amount_paisa": 250000,
+                     "state": "COMPLETED", "created_at": "..." },
+    "counterparty": { "id": 43, "name": "Karim U." },
+    "reversible_now": true,          // receiver's balance still covers it
+    "attempts": 0, "last_attempt_error": null
+  } ], "next_cursor": null, "has_more": false }
+```
+`reversible_now` is advisory only — it is computed at read time and the receiver can spend the money a millisecond later. The resolve call re-checks inside its own transaction. **Never gate the reversal on this field.**
+
+### `POST /admin/disputes/:id/resolve`  **idempotent, step-up**
+```jsonc
+// → { "action": "REVERSE", "resolution": "Confirmed wrong recipient, funds returned." }
+
+// ← 200 REVERSE succeeded
+{ "dispute": { "id": 12, "state": "REVERSED", "resolved_by": 1, "resolution": "..." },
+  "reversal": { "id": 1099, "ref": "TXN_01J9...", "kind": "REVERSAL" } }
+
+// ← 200 REJECT
+{ "dispute": { "id": 12, "state": "REJECTED", "resolution": "..." } }
+
+// ← 402 INSUFFICIENT_FUNDS — the receiver already spent it
+{ "error": "INSUFFICIENT_FUNDS",
+  "message": "Karim's balance is ৳400.00, the reversal needs ৳2,500.00",
+  "details": { "dispute_state": "OPEN", "attempts": 1 } }
+```
+`resolution` text is **mandatory** and enforced by a DB constraint — a dispute cannot leave `OPEN` without it.
+
+`REVERSE` runs the ordinary reversal path in one transaction: it creates a `REVERSAL` transaction with mirrored entries, CASes the original `COMPLETED → REVERSED`, and CASes the dispute `OPEN → REVERSED`, all atomically.
+
+**If the receiver already spent the money the whole thing rolls back**, the dispute **stays `OPEN`**, and the failure is recorded on `attempts` / `last_attempt_error`. We deliberately did not invent a `REVERSAL_FAILED` state: the dispute genuinely is still open, the admin can retry once the receiver's balance recovers, or reject it. Volunteer this to a judge — *we do not fabricate money to resolve a dispute.*
+
+Every resolution writes `ledger.audit_log` with actor, before/after JSONB, and the reason.
 
 ### `POST /admin/limits/:userId`  **step-up**
 `{ "daily_send_limit_paisa": 10000000, "reason": "..." }`
@@ -354,6 +402,36 @@ Shows `SYSTEM_MINT` at a large negative balance. Have the explanation ready: it 
 
 ### `POST /admin/partitions/next-month`
 Creates next month's `entries` partition **and attaches the balance trigger to it**. A partition without that trigger is a silent hole in the conservation guarantee.
+
+---
+
+## Caching (Read Service)
+
+The Read Service fronts its queries with Redis. Two rules govern every cached value:
+
+**1. The balance is never cached.** It is a primary-key lookup already sitting in `shared_buffers` — microseconds — and it is simultaneously the highest-write-rate and highest-correctness value in the system. Caching it buys nothing and costs a coherence problem.
+
+**2. Cache reads are version-keyed, not invalidated.** Every key embeds the user's cache version:
+
+```
+u:{uid}:v                                  -- INCR'd by the Kafka consumer
+hist:{uid}:{v}:{cursor}:{filter}    120s
+limits:{uid}:{v}:{yyyymmdd}         to midnight
+notif:unread:{uid}:{v}              120s
+lookup:{phone}                      300s   -- not user-versioned; profile changes are rare
+```
+
+A `DEL`-based cache has a real race: a reader can load stale rows from Postgres, and write them into the cache *after* the invalidation arrives, poisoning the key until its TTL. With version-keyed reads that same race still happens — but the stale reader writes to the **previous version's key**, which nothing will ever read again. It expires unread.
+
+> **Say it like this:** *"We don't invalidate the cache. We make stale keys unreachable."*
+
+Cache headers on every cached response so this is visible in the demo:
+```
+X-Cache: HIT | MISS | BYPASS
+X-Cache-Version: 7
+```
+
+**Redis being down is not an error.** Every cache call is wrapped so a failure falls through to Postgres and the request still succeeds — degraded, not broken. `GET /admin/health` reports `redis.ok: false` while this is happening.
 
 ---
 

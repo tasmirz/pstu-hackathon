@@ -1,6 +1,6 @@
 # PSTU Hackathon — Money Movement App
 
-**Services:** Auth Gateway · Txn Service · Read Service · Centrifugo · Redpanda · Postgres 16 + PgBouncer
+**Services:** Auth Gateway · Txn Service · Read Service · Centrifugo · Redpanda · Redis · Postgres 16 + PgBouncer
 **Ledger:** double-entry, append-only, partitioned · **Money:** BIGINT paisa · **Writes:** synchronous · **Events:** outbox → Kafka
 
 | File | What it is | Owner |
@@ -9,6 +9,7 @@
 | `SCHEMA.sql` | Complete runnable schema, roles, integrity views | C |
 | `API.md` | Every endpoint, request/response shape, error code | B, D |
 | `UI_SPEC.md` | Every screen, state, and interaction | D |
+| `SIMULATOR.md` | Scenario harness: every failure mode, PASS/FAIL board | C |
 
 Contest window **09:00–15:00**. The clock below starts at 10:00. If 09:00–10:00 turns out to be usable, that hour goes to **Phase 1 buffer** — not to extra features. Phase 1 running long is the single most likely way this day goes wrong, and an hour of slack there is worth more than any P1 feature.
 
@@ -25,11 +26,11 @@ Contest window **09:00–15:00**. The clock below starts at 10:00. If 09:00–10
                         └───────────┬────────────┘
                     ┌───────────────┴────────────────┐
                     │ sync (money)                   │ sync (queries)
-         ┌──────────▼───────────┐          ┌─────────▼────────────┐
-         │     Txn Service      │          │     Read Service     │
-         │     schema: ledger   │          │  SELECT-only on      │
-         │     WRITE model      │          │  ledger; owns notify │
-         └──────────┬───────────┘          └─────────┬────────────┘
+         ┌──────────▼───────────┐          ┌─────────▼────────────┐     ┌───────┐
+         │     Txn Service      │          │     Read Service     │◀───▶│ Redis │
+         │     schema: ledger   │          │  SELECT-only on      │     │ cache │
+         │     WRITE model      │          │  ledger; owns notify │     └───────┘
+         └──────────┬───────────┘          └─────────┬────────────┘   version-keyed
                     │                                │
                     │  ONE transaction:              │  getBalance → primary
                     │  txn + entries + balances      │  getHistory → replica seam
@@ -47,10 +48,11 @@ Contest window **09:00–15:00**. The clock below starts at 10:00. If 09:00–10
                         └────────┬─────────┘
                      ┌───────────┴────────────┐
                      ▼                        ▼
-            ┌────────────────┐      ┌──────────────────┐
-            │  Centrifugo    │      │  notify consumer │
-            │  WS fan-out    │      │  (in Read Svc)   │
-            └───────┬────────┘      └──────────────────┘
+            ┌────────────────┐      ┌──────────────────────────────┐
+            │  Centrifugo    │      │  consumer (in Read Svc)      │
+            │  WS fan-out    │      │  writes notifications        │
+            └───────┬────────┘      │  INCRs Redis cache version   │
+                    │               └──────────────────────────────┘
                     │ WS
                     ▼
             recipient's browser — balance updates live
@@ -89,7 +91,7 @@ Kafka's transactional producer does not help: its exactly-once semantics are Kaf
 
 The outbox row commits **in the same transaction as the money**. A relay drains it with `FOR UPDATE SKIP LOCKED`. It is also the answer to *"what if Redpanda dies?"* — transfers keep committing, the outbox backs up, events drain on recovery. We demo this by killing the broker.
 
-## 1.2 No projection, no cache, no replica — but every seam is in place
+## 1.2 A Redis cache, but no projection and no replica
 
 The Read Service queries the same Postgres with **SELECT-only grants**. The ownership boundary is enforced by database permissions, not by convention: `read_svc` is structurally incapable of writing to `ledger`.
 
@@ -99,7 +101,45 @@ We deliberately did not build a separate projection store.
 
 A projection would have required: absolute-value application (never deltas — one duplicate event silently corrupts a balance forever), a per-account sequence guard (a transfer touches two accounts, so events for one account arrive across partitions **out of order**, and a stale event would overwrite a newer balance), and rebuild-from-topic with retention configured for it. That is a lot of failure surface whose worst case is *"the sender's balance doesn't move on stage."*
 
-**If a cache is added later: invalidate, never update.** A consumer that `DEL`s a key degrades to one extra DB read on any lost, duplicated, or out-of-order event. A consumer that *writes values* into the cache inherits every one of the bugs above and can hold a confidently wrong balance. And never cache the balance itself — it is a primary-key lookup already sitting in `shared_buffers`, with the highest write rate and the highest correctness requirement in the system.
+### The cache: version-keyed, never value-writing
+
+The Read Service fronts its queries with Redis. Two rules decide whether this is safe:
+
+**Rule 1 — the balance is never cached.** It is a primary-key lookup already sitting in `shared_buffers` (microseconds), and it is simultaneously the highest-write-rate and highest-correctness value in the system. Caching it buys nothing and costs a coherence problem. What *is* worth caching is the genuinely expensive stuff: history pages with counterparty joins, the `spent_today` aggregate behind daily limits, unread notification counts, and phone lookups.
+
+**Rule 2 — the consumer bumps a version; it never writes values into the cache.**
+
+```
+u:{uid}:v                              INCR'd by the Kafka consumer on any txn event
+hist:{uid}:{v}:{cursor}:{filter}       TTL 120s
+limits:{uid}:{v}:{yyyymmdd}            TTL to midnight
+notif:unread:{uid}:{v}                 TTL 120s
+lookup:{phone}                         TTL 300s   (not user-versioned; rarely changes)
+```
+
+```ts
+async getHistory(uid, cursor) {
+  const v   = await redis.get(`u:${uid}:v`) ?? '0';
+  const key = `hist:${uid}:${v}:${cursor}`;
+  const hit = await redis.get(key);
+  if (hit) return JSON.parse(hit);
+  const rows = await this.replica.query(...);
+  await redis.setex(key, 120, JSON.stringify(rows));
+  return rows;
+}
+// consumer:  on txn.completed → INCR u:{sender}:v ; INCR u:{receiver}:v
+```
+
+A `DEL`-based cache has a race that bites in production and is invisible in testing: a reader loads stale rows from Postgres, the invalidation arrives, and *then* the reader writes its stale rows into the cache — poisoning the key until its TTL expires. With version-keyed reads that same interleaving still happens, but the stale reader writes to the **previous version's key**, which nothing will ever read again. It expires unread.
+
+> **Say it like this:** *"We don't invalidate the cache. We make stale keys unreachable."*
+
+Two consequences worth stating before a judge asks:
+
+- **A consumer that wrote values into the cache would inherit every projection bug** — duplicate delivery applying twice, and cross-partition out-of-order arrival overwriting a newer value with an older one. An `INCR` is immune to both: it is commutative and monotonic, so a duplicate or late event is harmless.
+- **Redis being down is not an error.** Every cache call is wrapped so a failure falls through to Postgres. Degraded, not broken. `GET /admin/health` reports `redis.ok: false` while it lasts, and `CACHE-03` in the simulator kills Redis mid-run to prove it.
+
+Responses carry `X-Cache: HIT|MISS` and `X-Cache-Version`, so the mechanism is visible during the demo instead of being a claim.
 
 Streaming replication is likewise not built. It is 30 fiddly minutes, does nothing for a demo dataset, and its one visible effect on stage would be replica lag making the sender's balance look stale. What matters is that the routing decision exists in code:
 
@@ -135,7 +175,7 @@ Both pools point at the same DSN today. *"The routing seam is in the repository;
 |---|---|---|
 | **A** | Txn Service. The ledger and the transfer path, **alone**. | `POST /transfers` green by 12:00 |
 | **B** | Auth Gateway, then features on A's ledger. | login + JWT by 11:15 |
-| **C** | Infra, migrations, seeds, outbox relay, Centrifugo, load test, README. | compose up + schema applied by 10:25 |
+| **C** | Infra, migrations, seeds, outbox relay, Centrifugo, README, and **the scenario simulator**. | compose up + schema applied by 10:25 |
 | **D** | Frontend against `API.md` mocks; wires real API from 13:00. | login + dashboard on mocks by 12:00 |
 
 **Only A touches `TransferService`.** Two people editing the money path concurrently is how a hackathon produces a ledger that doesn't balance at 14:30.
@@ -165,6 +205,8 @@ services:
   pgbouncer:  { ports: ["6432:6432"] }   # every app connects HERE
   redpanda:   { }                        # 12–24 partitions per topic
   centrifugo: { ports: ["8000:8000"] }
+  redis:      { image: redis:7-alpine }  # read cache. NO persistence configured —
+                                         # it holds nothing that isn't in Postgres.
 ```
 
 ```ini
@@ -196,6 +238,8 @@ Without this line, `pg` returns **every BIGINT as a string**. `balance - amount`
 # 3. Phase 1 — 10:25–12:00 · Ledger core (A) + auth (B)
 
 Everything in this phase is **P0**. Nothing here is negotiable, and no P1 feature starts until the 12:00 checkpoint is green.
+
+**C starts the scenario simulator at 10:30, in parallel.** The invariant checks are pure SQL and need no API, so the harness is verifying conservation, drift and append-only before `POST /transfers` exists. From that point on, A's ledger is correct when the board is green — not when it feels right. See `SIMULATOR.md`.
 
 Full DDL is in `SCHEMA.sql`. The essentials and *why* they exist:
 
@@ -327,6 +371,8 @@ Build strictly in this order. **Stop at the cut line when the clock says so, not
 | 8 | **Daily limit + velocity guard** | B | ৳50,000/day with visible remaining allowance; >10 txn/min → PIN re-entry. |
 | 9 | **Freeze / unfreeze** | B | Frozen accounts **still receive**; only sending is blocked. |
 | 10 | **Transaction detail showing both ledger legs** | D | Makes double-entry visible to a judge without opening the code. Nearly free — the data is already in the response. |
+| 11 | **Disputes + admin resolution** | B | See §4.3. The only human-in-the-loop flow in the system, and the one place an admin can move money. |
+| 12 | **Redis cache on the Read Service** | C | Version-keyed (§1.2). ~30 min: one `INCR` in the consumer, one wrapper on three read paths. |
 
 **Centrifugo channel authorization is mandatory, not optional.** User A must not be able to subscribe to user B's channel. Centrifugo's user-limited channel form (`user#42`) plus a JWT connection token is the shortest path — **verify the exact syntax against the Centrifugo docs before wiring**, it is the one piece of third-party config in the stack.
 
@@ -362,7 +408,34 @@ Three independent things stop a double-settle:
 
 The sender's balance shows a separate **held** line while a transfer is in flight, so ৳10,000 leaving and not yet arriving never looks like missing money.
 
-### 4.3 P2 — below the line, only if genuinely ahead
+### 4.3 Disputes — the only place an admin moves money
+
+Everything else in this system is a user acting on their own money. Disputes are the one flow where a human with authority intervenes, so the audit trail matters more than the feature.
+
+```
+  Either party raises            Admin decides
+  (sender OR receiver,           ┌──────────────────────────────────┐
+   within 7 days)                │                                  │
+        │                        ▼                                  ▼
+   POST /disputes  ──▶  OPEN ──▶ REVERSED                       REJECTED
+                          │      (compensating txn created)     (no money moves)
+                          │
+                          └──▶ reversal FAILS (receiver spent it)
+                               → stays OPEN, attempts++, error recorded
+```
+
+Four decisions, each of which a judge can probe:
+
+1. **Raising a dispute moves no money and freezes nothing.** It creates a work item. Freezing a transaction on accusation would let anyone grief a recipient by disputing every payment.
+2. **One *open* dispute per transaction**, enforced by a partial unique index — not an `if`. A closed dispute can be superseded by a new one later.
+3. **`REVERSE` is one atomic transaction**: create the `REVERSAL` with mirrored entries, CAS the original `COMPLETED → REVERSED`, CAS the dispute `OPEN → REVERSED`. All three or none.
+4. **If the receiver already spent the money, the whole thing rolls back and the dispute stays `OPEN`.** We deliberately did *not* invent a `REVERSAL_FAILED` state — the dispute genuinely is still open. The admin retries when the balance recovers, or rejects it. **Volunteer this:** *we don't fabricate money to resolve a dispute.* It is the most senior-sounding sentence available in the whole demo.
+
+`resolution` text is mandatory, enforced by a `CHECK` — a dispute cannot leave `OPEN` without one. Every resolution writes `ledger.audit_log` with actor, before/after JSONB and reason.
+
+The admin queue (`GET /admin/disputes`) returns `reversible_now` computed at read time. **It is advisory only** — the receiver can spend the money a millisecond later, so the resolve call re-checks inside its own transaction. Never gate the reversal on that field; it exists to order the queue, not to authorise.
+
+### 4.4 P2 — below the line, only if genuinely ahead
 
 | Feature | Cost | Note |
 |---|---|---|
@@ -380,11 +453,13 @@ The sender's balance shows a separate **held** line while a transfer is in fligh
 
 **This phase wins the judging.** It is worth more than everything below the Phase 2 cut line combined. If Phase 2 is running late, take the time from Phase 2, not from here.
 
-### 5.1 The load test — run it live, never from a screenshot
+### 5.1 The simulator board and the load test — run them live, never from a screenshot
 
 200 accounts, 5,000 concurrent transfers in a ring (i → i+1). Asserts **total supply unchanged** and **no negative balance**.
 
-Write this script during **Phase 1**, not at 13:00. Authoring a load generator under time pressure is exactly where this goes wrong, and the assertion is also the fastest way to catch a ledger bug at 11:30 while there's still time to fix it.
+This is scenario `CON-03` in the simulator, not a separate script. By 13:00 it runs inside a board of ~50 scenarios that includes container kills, client aborts mid-request, and every concurrency race in the system — and **every one of them re-asserts conservation, drift and non-negativity for free**. The full catalog and schedule are in `SIMULATOR.md`.
+
+The harness is written during **Phase 1**, not at 13:00. Authoring it under time pressure is exactly where this goes wrong, and it is also the fastest way to catch a ledger bug at 11:30 while there is still time to fix it.
 
 The ring topology is deliberate: each account is touched by exactly two concurrent transfers, which is maximum realistic contention without a single hot row. With ascending-id lock ordering it produces **zero deadlocks** — and "0 deadlocks across 5,000 concurrent transfers" is a number worth putting on screen.
 
@@ -425,7 +500,7 @@ Phase 5: README with the architecture diagram and design decisions. Seeded demo 
 | 5 | Send ৳10,000 → 60s undo → cancel | Money conserved at every instant |
 | 6 | Alam requests ৳1,200 → Rahim approves | *the brief's other quote*; consent boundary |
 | 7 | Reverse a transaction | Ledger **grew**. Nothing was edited. |
-| 8 | Run the 5,000-transfer load test live | Supply unchanged, 0 deadlocks |
+| 8 | Run the simulator live — ~50 scenarios, incl. container kills | Supply unchanged, 0 deadlocks, conservation held across all of them |
 | 9 | **Kill Redpanda. Transfers still work.** | Correct failure mode for payments |
 | 10 | `/admin/integrity` — sum = 0 | The invariant, on screen |
 
@@ -442,7 +517,7 @@ Give it as a **bottleneck ladder**, in the order you would actually hit them:
 | Connections (10k concurrent clients) | PgBouncer, transaction mode, 10k → 50 backends | ✅ |
 | Fan-out work (notify, fraud, statements) | Outbox → Kafka → consumers | ✅ |
 | History table size (7B+ rows/yr) | Monthly range partitions; archiving is `DETACH`, a metadata op | ✅ |
-| Read throughput | Replicas + the repository routing seam | seam ✅, replica no |
+| Read throughput | Redis in front, then replicas + the repository routing seam | cache ✅, seam ✅, replica no |
 | **Write throughput, single primary** | ← **this is the real wall** | measured |
 | Hot-account contention | Shard `SYSTEM_MINT` into N; sub-accounts for hot merchants | designed |
 | Beyond one primary | Shard by `user_id`; cross-shard transfers go two-phase | design only |
@@ -488,3 +563,5 @@ In the code: **Repository, Strategy, State Machine, Transactional Outbox, CQRS, 
 | Can you edit the ledger? | The application role has no UPDATE or DELETE on `entries`. Try it — permission denied. |
 | What if the receiver already spent it? | The reversal fails with insufficient funds and becomes a dispute. We don't fabricate money to undo a transfer. |
 | How do you know it's correct under load? | We don't assert it, we test it. 5,000 concurrent transfers, supply unchanged, live, right now. |
+| How do you invalidate the cache? | We don't. Keys embed a version the consumer bumps, so stale keys become unreachable and expire unread. And we never cache the balance. |
+| What if a dispute can't be reversed? | It stays open. We don't fabricate money to resolve a dispute — the admin retries or rejects, and both are audited. |

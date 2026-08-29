@@ -277,15 +277,26 @@ CREATE TABLE ledger.disputes (
   resolution     TEXT,                                -- admin's mandatory note
   resolved_by    BIGINT,
   reversal_txn_id BIGINT REFERENCES ledger.transactions(id),
+  -- An admin can click REVERSE and have it fail because the receiver already
+  -- spent the money. The dispute stays OPEN and the failure is recorded here
+  -- rather than inventing a state for it. Admin retries later, or rejects.
+  attempts           INT         NOT NULL DEFAULT 0,
+  last_attempt_at    TIMESTAMPTZ,
+  last_attempt_error TEXT,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   resolved_at    TIMESTAMPTZ,
 
-  CONSTRAINT dispute_state_chk CHECK (state IN ('OPEN','REVERSED','REJECTED'))
+  CONSTRAINT dispute_state_chk CHECK (state IN ('OPEN','REVERSED','REJECTED')),
+  -- resolution text is mandatory the moment a dispute leaves OPEN
+  CONSTRAINT dispute_resolution_required
+    CHECK (state = 'OPEN' OR (resolution IS NOT NULL AND resolved_by IS NOT NULL))
 );
 
+-- One open dispute per transaction. A closed one may be superseded by a new one.
 CREATE UNIQUE INDEX one_open_dispute_per_txn
   ON ledger.disputes (txn_id) WHERE state = 'OPEN';
-CREATE INDEX ON ledger.disputes (state, id DESC);
+CREATE INDEX ON ledger.disputes (state, id DESC);       -- the admin queue
+CREATE INDEX ON ledger.disputes (raised_by, id DESC);
 
 
 -- Per-user daily send cap. Absence of a row means the system default applies.

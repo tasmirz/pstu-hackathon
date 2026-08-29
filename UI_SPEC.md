@@ -72,7 +72,8 @@ Map the backend's `error` code to one plain sentence each. Never show a raw code
 | 7 | Request Money — create | **P1** | |
 | 8 | Request inbox / outbox | **P1** | |
 | 9 | Undo countdown | **P1** | only if the backend HELD flow shipped |
-| 10 | Reversal / dispute | **P1** | |
+| 10 | Reversal / raise dispute | **P1** | |
+| 10b | Admin dispute queue | **P1** | the only screen where an admin moves money |
 | 11 | Limits & velocity display | **P1** | |
 | 12 | Notification feed | **P2** | |
 | 13 | TOTP enrolment | **P2** | only if backend TOTP shipped |
@@ -236,8 +237,12 @@ The cheapest high-value screen in the app: the ledger legs are already in the re
 That `Sum ৳0.00` line makes double-entry visible to a judge who never opens the code. Leave it on screen.
 
 **Reverse** → confirm modal with a mandatory reason → `POST /transactions/:id/reverse`.
-- `402` → *"Karim has already spent this money. Raise a dispute instead."* with a button to do so. **Honest failure beats fake success — volunteer this case to the judges.**
+- `402` → *"Karim has already spent this money. Raise a dispute instead."* with a button that opens the dispute form pre-filled. **Honest failure beats fake success — volunteer this case to the judges.**
 - `409` → *"Already reversed."* and refresh.
+
+**Raise dispute** (either party, within 7 days) → modal with a required reason → `POST /disputes`. Once open, the transaction row shows a `Disputed` chip and the detail screen shows the dispute state and, once resolved, the admin's resolution text. The user sees *why* their dispute was rejected — a dispute that silently disappears is worse than one that is refused.
+- `409 DISPUTE_ALREADY_OPEN` → *"A dispute is already open on this transaction."*
+- `422 DISPUTE_WINDOW_CLOSED` → *"Transactions can only be disputed within 7 days."*
 
 ---
 
@@ -311,7 +316,33 @@ Persistent bar on Dashboard while any transfer is `HELD`:
 
 **TOTP enrolment (P2)** — QR from `otpauth_url` (any small QR lib), then 6-digit confirm, then the 8 backup codes **shown exactly once** with a copy button and an explicit *"save these now"*. Only build if backend TOTP shipped.
 
-**Admin console (P2)** — freeze/unfreeze, disputes, outbox monitor, load-test trigger. The Integrity page already carries the demo; this is genuine garnish. If you build one thing here, make it the **load-test button** so §Phase 3 can be run from the UI on stage.
+### Admin dispute queue — **P1** — *the only screen where an admin moves money*
+
+```
+┌──────────────────────────────────────────────────────┐
+│  Open disputes  (3)                                   │
+├──────────────────────────────────────────────────────┤
+│  #12  Rahim A. (sender) disputes ৳2,500.00           │
+│       "Sent to the wrong number"                      │
+│       TXN_01J8XKQ4 → Karim U. · Aug 29, 3:14 PM      │
+│       ● Reversible now                                │
+│                            [ Reject ]  [ Reverse ]    │
+├──────────────────────────────────────────────────────┤
+│  #14  Nadia S. (receiver) disputes ৳800.00           │
+│       "Paid twice for the same order"                 │
+│       ○ Not reversible — receiver balance ৳400.00    │
+│       ⚠ 1 failed attempt: INSUFFICIENT_FUNDS         │
+│                            [ Reject ]  [ Reverse ]    │
+└──────────────────────────────────────────────────────┘
+```
+
+- From `GET /admin/disputes?state=OPEN`.
+- **`Reversible now` is advisory, shown greyed rather than disabling the button.** The receiver can spend the money a millisecond after the page loads, so the server re-checks inside its own transaction. Disabling the button on a stale read would be lying to the admin about a guarantee the UI cannot make.
+- **Both actions require a resolution note** — the submit button stays disabled until the textarea has content. The backend enforces it with a `CHECK` constraint too; the UI just makes it obvious.
+- `Reverse` → `402` → keep the dispute in the list, show *"Reversal failed — Karim's balance is ৳400.00. Retry later or reject."* and increment the visible attempt count. **Do not remove the row.** This is the flow worth rehearsing: it's the one that demonstrates the system refusing to fabricate money.
+- Resolved disputes move to a `Resolved` tab showing who resolved them and when.
+
+**Rest of admin console (P2)** — freeze/unfreeze, outbox monitor, load-test trigger. The Integrity page already carries the demo; this is garnish. If you build one more thing, make it the **simulator run button** so the Phase 3 board can be launched from the UI on stage.
 
 ---
 
@@ -323,6 +354,7 @@ Persistent bar on Dashboard while any transfer is `HELD`:
 4. History + Detail with the ledger legs (6 min)
 5. Ledger Integrity (4 min)
 6. Request inbox (P1, if time)
-7. Undo bar (P1, if time)
+7. Admin dispute queue (P1, if time — 8 min, and it is a distinct demo beat)
+8. Undo bar (P1, if time)
 
 If you reach 14:25 with items 1–5 working and nothing else, the demo is complete. Items 6+ are upside.
