@@ -6,10 +6,13 @@ import { LedgerWriterService } from '../core/ledger-writer.service';
 import { AccountsRepository } from '../core/accounts.repository';
 import { UsersRepository } from '../core/users.repository';
 
+import { SweeperService } from './sweeper.service';
+
 @Module({
   controllers: [TransfersController],
   providers: [
     TransfersService,
+    SweeperService,
     AccountsRepository,
     UsersRepository,
     {
@@ -17,6 +20,6 @@ import { UsersRepository } from '../core/users.repository';
       useClass: LedgerWriterService,
     },
   ],
-  exports: [TransfersService],
+  exports: [TransfersService, SweeperService],
 })
 export class TransfersModule {}
