@@ -73,16 +73,23 @@ Map the backend's `error` code to one plain sentence each. Never show a raw code
 | 8 | Request inbox / outbox | **P1** | |
 | 9 | Undo countdown | **P1** | only if the backend HELD flow shipped |
 | 10 | Reversal / raise dispute | **P1** | |
-| 10b | Admin dispute queue | **P1** | the only screen where an admin moves money |
+| 10b | My Disputes | **P1** | tracking list — a dispute must never silently disappear |
+| 10c | Admin dispute queue | **P1** | the only screen where an admin moves money |
 | 11 | Limits & velocity display | **P1** | |
 | 12 | Notification feed | **P2** | |
 | 13 | TOTP enrolment | **P2** | only if backend TOTP shipped |
 | 14 | Admin console | **P2** | integrity page already covers the demo |
+| 15 | Bill Payment — pay a fixed request | **P1** | this is the Money Requests flow (§8), "Bill Payment" is the product name for it |
+| 16 | Shared Bill — create | **P1** | new feature, §12 |
+| 17 | Shared Bill — detail / status board | **P1** | new feature, §12 |
+| 18 | Shared Bill — pay my share | **P1** | new feature, §12 — settles from the payer's normal account, same as Send |
 
 ```
 Login ──▶ Dashboard ─┬─▶ Send (3 steps) ──▶ result ──▶ Dashboard
-                     ├─▶ Request: create / inbox
-                     ├─▶ History ──▶ Detail ──▶ Reverse
+                     ├─▶ Request: create / inbox      (= "Bill Payment")
+                     ├─▶ Shared Bill: create / detail / pay my share
+                     ├─▶ History ──▶ Detail ──┬─▶ Reverse
+                     │                        └─▶ Raise dispute ──▶ My Disputes
                      ├─▶ Notifications
                      └─▶ Ledger Integrity   (direct link, not in main nav)
 ```
@@ -240,9 +247,79 @@ That `Sum ৳0.00` line makes double-entry visible to a judge who never opens th
 - `402` → *"Karim has already spent this money. Raise a dispute instead."* with a button that opens the dispute form pre-filled. **Honest failure beats fake success — volunteer this case to the judges.**
 - `409` → *"Already reversed."* and refresh.
 
-**Raise dispute** (either party, within 7 days) → modal with a required reason → `POST /disputes`. Once open, the transaction row shows a `Disputed` chip and the detail screen shows the dispute state and, once resolved, the admin's resolution text. The user sees *why* their dispute was rejected — a dispute that silently disappears is worse than one that is refused.
-- `409 DISPUTE_ALREADY_OPEN` → *"A dispute is already open on this transaction."*
+**Raise dispute** (either party, within 7 days) → opens the full flow in §6b. Once open, the transaction row shows a `Disputed` chip and the detail screen shows the dispute state and, once resolved, the admin's resolution text. The user sees *why* their dispute was rejected — a dispute that silently disappears is worse than one that is refused.
+
+---
+
+## 6b. Raise a Dispute — full flow — **P1**
+
+A modal from Transaction Detail's `[ Dispute ]` button (shown for any
+`COMPLETED` transaction the user is a party to, within the 7-day window —
+hide the button rather than let it 422 on tap once the window's obviously
+closed, but still handle the 422 if it races).
+
+```
+┌────────────────────────────────────────┐
+│  Dispute this transaction               │
+│  ৳2,500.00 to Karim U. · Aug 29         │
+│                                          │
+│  What went wrong?                       │
+│  [ Sent to the wrong number         ]   │
+│  [ (free text, required, 3–500 chars)]  │
+│                                          │
+│  This does not move any money. An       │
+│  admin reviews it and may reverse the   │
+│  transaction once you submit.           │
+│                                          │
+│  [ Cancel ]                [ Submit ]   │
+└────────────────────────────────────────┘
+```
+
+- `POST /disputes` with `{ txn_id, reason }`. **No step-up, no idempotency
+  key** — raising a dispute moves no money, same reasoning as creating a
+  money request.
+- On success: close the modal, show a toast *"Dispute submitted — we'll
+  review it."*, and route to §6c so the user immediately sees where to track
+  it. Don't just close the modal and leave them wondering if it worked.
+- `409 DISPUTE_ALREADY_OPEN` → *"A dispute is already open on this transaction."* — replace the button with a `View dispute` link to §6c instead of leaving it tappable.
 - `422 DISPUTE_WINDOW_CLOSED` → *"Transactions can only be disputed within 7 days."*
+- `403 NOT_A_PARTY` → shouldn't be reachable from the UI (button is only shown to sender/receiver); if it somehow fires, generic error and log it — it means the detail screen showed the button to the wrong person.
+
+---
+
+## 6c. My Disputes — **P1**
+
+`GET /disputes` — every dispute the current user has raised, regardless of
+state. **Never filter out resolved ones** — a dispute that vanishes from the
+list reads as a bug, the exact same principle as expired money requests (§8).
+
+```
+┌────────────────────────────────────────┐
+│  My Disputes                            │
+├────────────────────────────────────────┤
+│  ● OPEN                                 │
+│  ৳2,500.00 to Karim U. · Aug 29         │
+│  "Sent to the wrong number"             │
+│                          [ View txn ]   │
+├────────────────────────────────────────┤
+│  ✓ REVERSED                             │
+│  ৳800.00 to Alam H. · Aug 27            │
+│  "Paid twice for the same order"        │
+│  Resolved: "Confirmed duplicate,        │
+│  funds returned."                       │
+│                          [ View txn ]   │
+├────────────────────────────────────────┤
+│  ✗ REJECTED                             │
+│  ৳300.00 to Nadia S. · Aug 24           │
+│  Resolved: "Recipient confirmed         │
+│  correct — no error found."             │
+│                          [ View txn ]   │
+└────────────────────────────────────────┘
+```
+
+- `state: OPEN` — pending badge, no resolution text yet, set expectations with *"An admin will review this."*
+- `REVERSED` / `REJECTED` — show the admin's `resolution` text verbatim. This is the line that makes a rejected dispute feel resolved rather than ignored.
+- `[ View txn ]` deep-links to Transaction Detail (§6), which now shows the same dispute state inline.
 
 ---
 
@@ -269,7 +346,12 @@ Keep this the plainest screen in the app. No chart, no gradient. It should look 
 
 ---
 
-## 8. Money Requests — **P1**
+## 8. Money Requests — **P1** — a.k.a. "Bill Payment" (1:1)
+
+Product-facing name: **Bill Payment**. One person owes one fixed amount to
+another — this screen and `POST /money-requests` / `POST /money-requests/:id/pay`
+are the whole feature; there's no separate "Bill Payment" endpoint. §12 below
+is the *shared* version — several people owing one bill.
 
 **Create** — mirrors Send step 1, with no money moving and no step-up:
 ```
@@ -346,15 +428,94 @@ Persistent bar on Dashboard while any transfer is `HELD`:
 
 ---
 
-## 11. Build order for Phase 4's 40 minutes
+## 11. Shared Bill Payment — **P1** — new feature
+
+Several payers, one bill, each paying **from their own normal account** —
+no wallet, no escrow, no separate balance to top up. A share settlement is
+exactly a Send, just triggered from the bill screen instead of the phone
+number field. If you've built Send (§4) and Money Requests (§8) already,
+every piece here is a recombination of those two, not new mechanics.
+
+### Create
+
+```
+Bill title    [ Dinner at Kacchi Bhai              ]
+
+Split with
+  [ +8801798765432        ]  ৳ [   400.00 ]   [ ✕ ]   ← Karim U., resolved inline like Send
+  [ +8801765432109        ]  ৳ [   400.00 ]   [ ✕ ]   ← Nadia S.
+  [ + Add another person                      ]
+
+Total: ৳800.00                        [ Create Bill ]
+```
+
+- Same debounced `GET /users/lookup?phone=` resolution as Send's recipient
+  field, per row. A row that doesn't resolve blocks submit, same as Send.
+- **Total is computed, never typed** — it's the sum of the share amounts
+  shown live, matching `POST /bills`' shape exactly (there is nothing to
+  keep in sync because there's nothing else to enter).
+- A share whose phone is the creator's own is rejected client-side before
+  the request even fires (same `422 SELF_TRANSFER` reasoning as Send).
+- No step-up here — creating a bill moves no money, exactly like creating a
+  money request.
+- On success, route straight to the bill's detail screen below.
+
+### Detail / status board
+
+```
+┌────────────────────────────────────────┐
+│  Dinner at Kacchi Bhai            OPEN  │
+│  Created by you · Aug 29, 3:14 PM       │
+│  ৳800.00 total                          │
+├────────────────────────────────────────┤
+│  ✓ Karim U.          ৳400.00     PAID   │
+│  ○ Nadia S.          ৳400.00  PENDING   │
+├────────────────────────────────────────┤
+│  2 of 2 shares                          │
+│                          [ Cancel bill ]│   ← P2, creator only, only while any share is PENDING
+└────────────────────────────────────────┘
+```
+
+- `GET /bills/:id`. Each share row is a small version of a transaction row —
+  ✓/○ state, name, amount. A `PAID` share links to its own Transaction
+  Detail (§6) via `settled_txn_id`, same "show the real ledger row" instinct
+  as everywhere else in this app.
+- Bill state flips to **SETTLED** the instant every share is `PAID` — this
+  is a plain refetch or a Centrifugo-driven update, whichever the transfer
+  screen already uses; don't build a second live-update mechanism just for
+  this screen.
+- If the current user has their own `PENDING` share on this bill, show the
+  same big **[ Pay my share ]** button as the inbox row in §8 — don't make
+  them hunt for it among the other rows.
+
+### Pay my share
+
+Not a new screen — **route straight into Send's confirm step (§4 step 2)**,
+pre-filled with the bill creator as recipient and the share amount locked
+(not editable, unlike a normal Send). Same idempotency key discipline, same
+step-up rules (first-time-recipient, >৳20,000), same result screen. The one
+difference worth stating to a judge: *the money still comes out of the
+payer's ordinary balance — a shared bill is a bookkeeping wrapper around
+ordinary transfers, not a different kind of money.*
+
+- `POST /bills/:id/pay` (no share id — a payer only ever pays their own share).
+- `402 INSUFFICIENT_FUNDS` → identical inline handling to Send step 3.
+- `404 BILL_SHARE_NOT_FOUND` → shouldn't be reachable (button only shows when a share exists); generic error if it somehow fires.
+- `409 INVALID_STATE` → *"This was already paid."* + refresh the bill detail screen underneath.
+
+---
+
+## 12. Build order for Phase 4's 40 minutes
 
 1. Login → Dashboard → balance renders (10 min)
 2. Send, all three steps, happy path + insufficient funds (12 min)
 3. Centrifugo live balance update — **two windows side by side** (6 min)
 4. History + Detail with the ledger legs (6 min)
 5. Ledger Integrity (4 min)
-6. Request inbox (P1, if time)
-7. Admin dispute queue (P1, if time — 8 min, and it is a distinct demo beat)
-8. Undo bar (P1, if time)
+6. Request inbox — "Bill Payment" (P1, if time)
+7. Raise dispute + My Disputes (P1, if time — §6b/§6c)
+8. Admin dispute queue (P1, if time — 8 min, and it is a distinct demo beat)
+9. Shared Bill: create + detail + pay my share (P1, if time — §11, cheap once 2 and 6 exist)
+10. Undo bar (P1, if time)
 
 If you reach 14:25 with items 1–5 working and nothing else, the demo is complete. Items 6+ are upside.

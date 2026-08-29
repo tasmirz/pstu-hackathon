@@ -1,0 +1,33 @@
+{
+  "name": "pstu-money",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "sim"
+  ],
+  "scripts": {
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "infra:logs": "docker compose logs -f",
+    "db:apply": "node scripts/apply-schema.js",
+    "db:seed": "node scripts/seed.js",
+    "dev:auth": "npm run start:dev -w apps/auth-gateway",
+    "dev:txn": "npm run start:dev -w apps/txn-service",
+    "dev:read": "npm run start:dev -w apps/read-service",
+    "sim": "npm run sim -w sim",
+    "build": "npm run build -ws --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "ts-node": "^10.9.2",
+    "@types/node": "^20.14.0"
+  },
+  "dependencies": {
+    "pg": "^8.12.0"
+  }
+}

@@ -2,7 +2,11 @@
 
 **This file exists so D is never blocked on B.** It is written at Phase 0 and is the single source of truth for request/response shapes. If the backend deviates, the backend updates this file in the same commit.
 
-Base URL: `http://localhost:3000` (Auth Gateway — everything routes through it).
+Base URL: `http://localhost:3000` — one NestJS app (`apps/api`), layered
+controller → service → repository, with the auth/ledger/read concerns kept
+as separate modules and DB roles internally (see `BUILD_LOG_CLAUDE.md`
+"Pivot"). Every shape below is unchanged by that; it only affects how the
+backend is deployed, not the contract.
 
 ---
 
@@ -250,6 +254,100 @@ Raising a dispute moves **no money** and does not freeze the transaction. It cre
 
 ### `GET /disputes` — the raiser's own view
 `{ "items": [ { "id": 12, "txn_id": 1043, "state": "OPEN", "reason": "...", "resolution": null } ], ... }`
+
+---
+
+# Bill Payment
+
+Two distinct features, both settling money straight out of the payer's
+**normal `USER` ledger account** — no escrow, no separate wallet. A bill is a
+business-process record around a sequence of ordinary transfers; the money
+itself is exactly as real and exactly as double-entry as everywhere else.
+
+**Bill Payment (1:1)** — one person owes one fixed amount to another. This
+*is* `POST /money-requests` + `POST /money-requests/:id/pay` above, wearing
+"Bill Payment" as the product name for it. No new endpoint.
+
+**Multi-user Shared Bill Payment** — one bill, several payers, each owing
+their own share; the bill settles once every share is paid. New tables
+(`ledger.bills`, `ledger.bill_shares` — `infra/sql/002_bills_and_role_claude.sql`),
+new endpoints below.
+
+### `POST /bills`
+```jsonc
+// → {
+//   "title": "Dinner at Kacchi Bhai",
+//   "shares": [
+//     { "phone": "+8801798765432", "amount_paisa": 40000 },
+//     { "phone": "+8801765432109", "amount_paisa": 40000 }
+//   ]
+// }
+// ← 201
+{
+  "id": 5, "ref": "BILL_01J9...", "title": "Dinner at Kacchi Bhai",
+  "total_amount_paisa": 80000, "state": "OPEN",
+  "shares": [
+    { "id": 11, "payer": { "id": 43, "name": "Karim U.", "phone": "+8801798765432" },
+      "amount_paisa": 40000, "state": "PENDING" },
+    { "id": 12, "payer": { "id": 44, "name": "Nadia S.", "phone": "+8801765432109" },
+      "amount_paisa": 40000, "state": "PENDING" }
+  ],
+  "created_at": "2026-08-29T13:00:00Z"
+}
+```
+`total_amount_paisa` is the **sum of the shares**, not a separately-entered
+number — there is nothing for the client to keep in sync. Creating a bill
+moves **no money** and needs no step-up, same reasoning as a money request:
+it's a message, not a debit. A share whose phone resolves to the creator is
+rejected `422 SELF_TRANSFER` — you cannot owe your own bill.
+```
+← 400 VALIDATION_ERROR    // fewer than 2 shares, a non-positive amount, duplicate phone
+← 404 USER_NOT_FOUND      // a share's phone doesn't resolve
+← 422 SELF_TRANSFER       // a share's phone is the creator's own
+```
+
+### `GET /bills/mine?role=created|owed&state=&limit=&cursor=`
+`role=created` — bills you created. `role=owed` — bills where you have a
+share (paid or not). Same keyset pagination shape as `GET /transactions`.
+
+### `GET /bills/:id`
+Full detail, every share with its current state — the same "show all the
+legs" philosophy as transaction detail (API.md §Read Service).
+```jsonc
+{ "id": 5, "ref": "BILL_01J9...", "title": "...", "total_amount_paisa": 80000,
+  "state": "OPEN", "created_by": { "id": 42, "name": "Rahim A." },
+  "shares": [
+    { "id": 11, "payer": { "id": 43, "name": "Karim U." }, "amount_paisa": 40000,
+      "state": "PAID", "settled_txn_id": 1102 },
+    { "id": 12, "payer": { "id": 44, "name": "Nadia S." }, "amount_paisa": 40000,
+      "state": "PENDING", "settled_txn_id": null }
+  ], "created_at": "..." }
+```
+
+### `POST /bills/:id/pay`  **idempotent, step-up**
+Pays the **caller's own share** — there is no share id in the URL; a payer
+can only ever settle their own debt. Runs the same double-entry path as a
+transfer (`kind: BILL_SHARE_SETTLE`, payer's normal account → creator's
+normal account), CASes that share `PENDING → PAID`, and — inside the same
+transaction — CASes the bill `OPEN → SETTLED` the moment every share on it
+is `PAID`.
+```jsonc
+// ← 200
+{ "transaction": { "id": 1102, "kind": "BILL_SHARE_SETTLE", "state": "COMPLETED",
+                   "amount_paisa": 40000, "created_at": "..." },
+  "balance_paisa": 9600000,
+  "bill": { "id": 5, "state": "OPEN" } }        // "SETTLED" once this was the last share
+
+← 402 INSUFFICIENT_FUNDS
+← 403 STEP_UP_REQUIRED     // same >৳20,000 / first-time-recipient rules as a transfer
+← 404 BILL_SHARE_NOT_FOUND // you have no share on this bill
+← 409 INVALID_STATE        // your share is already PAID, or the bill is CANCELLED
+```
+
+### `POST /bills/:id/cancel`   *(P2 — build only if ahead)*
+Creator-only. Cancels every still-`PENDING` share (`CANCELLED`) and the bill
+itself. **Never touches an already-`PAID` share** — that money moved for
+real and is undone with a reversal/dispute, not a bill cancellation.
 
 ---
 
