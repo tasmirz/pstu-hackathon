@@ -206,6 +206,52 @@ Next: wait for Codex/Antigravity to report progress, then wire
 `app.module.ts` and run an end-to-end smoke test + the three invariant
 views.
 
+## Checked in on Codex + Antigravity, reassigned
+
+Pulled `main` (`df0dee5`) and verified against the actual repo rather than
+task-file claims:
+
+- **Antigravity**: `DisputesModule`, `RequestsModule`, `BillsModule` all
+  landed, `apps/api` builds clean, and `node scripts/apply-schema.js` +
+  `node scripts/test-antigravity.js` (their own end-to-end script, seeding
+  users directly since Auth doesn't exist yet) passes every assertion —
+  including the two-phase dispute-failure shape (§4.3) and all three
+  invariant views (conservation, drift, negative balances) staying clean
+  throughout. Genuinely solid work, verified, not just claimed.
+- **Codex**: nothing landed — no `main.ts`, `app.module.ts`,
+  `modules/auth`, `modules/query`, or `modules/admin`. This is now the
+  single blocking item for the whole team: Antigravity's finished modules
+  sit unimported, the existing `AdminDisputesController` has no
+  `AdminModule` to register into, and `frontend/` (already scaffolded by
+  someone else — login/send/history/disputes/bills/admin pages) has no real
+  API to call.
+- **Found and fixed my own gap**: `modules/ledger/transfers/` and
+  `modules/ledger/reversals/` (written earlier this session) were missing
+  their `.module.ts` files entirely — only controller/service/dto existed.
+  Codex's bootstrap would have hit a missing-import wall on day one. Added
+  `transfers.module.ts` and `reversals.module.ts` matching the provider
+  pattern Antigravity already established (each feature module
+  self-declares `AccountsRepository`/`UsersRepository`/`LedgerWriterService`
+  rather than sharing a core module — harmless duplication, all stateless
+  pool wrappers). Rebuilt `apps/api` clean.
+
+Reassigned: **Codex** keeps the same task, now with an urgency banner
+listing exactly what's waiting on it and the note that Antigravity's
+modules should all be wired into `app.module.ts` now (not held back for
+central integration — no reason to, they're done and tested). **Antigravity**
+gets Round 2: HOLD / 60-second undo-window transfers (PLAN.md §4.2, the
+"showpiece") — the one substantial P1 ledger feature still unbuilt, and
+self-contained enough not to need Codex's Auth work to develop against
+(same direct-DB-seed workaround as Round 1). Flagged the one real design
+tension up front: `LedgerWriterService.moveMoney` currently only resolves
+`USER`-type accounts, and HOLD legs need to move money into/out of a `HOLD`
+account — gave two concrete extension options rather than letting them
+discover the constraint mid-implementation.
+
+`TASKS_CLAUDE.md` rewritten with a dated status table reflecting verified
+(not claimed) state, and a checklist covering both rounds plus the
+frontend's dependency on Codex.
+
 ## STOPPED HERE — user asked for a handoff mid-refactor
 
 `apps/api` does **not run yet** — `main.ts`, `app.module.ts`, and the
