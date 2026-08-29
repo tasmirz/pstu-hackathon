@@ -72,3 +72,39 @@ and proven correct right now against the live database.
 Next: once Codex's bootstrap + AuthModule are confirmed running,
 `harness/client.ts` (typed HTTP client per `API.md`) and the `HAP`/`IDEM`/
 `VAL`/`CON` scenario groups.
+
+## Merged in: Codex's bootstrap (verified live) + Antigravity Round 2 (HOLD/undo)
+
+While writing the simulator above, Codex delivered `main.ts`/`app.module.ts`/
+`AuthModule`/`QueryModule`/`AdminModule` directly to disk (uncommitted at
+the time) and Antigravity pushed Round 2 to `origin/main`. Handled both:
+
+- Waited for Codex's files to stop changing, then rebuilt `apps/api` — clean
+  — and ran a **live end-to-end HTTP smoke test** against the real server:
+  register (real signup-bonus ledger txn) → login → `GET /accounts/me/balance`
+  → `GET /users/lookup` → step-up → `POST /transfers` (idempotent, real
+  double-entry) → promoted a user to `ADMIN` via `scripts/promote-admin.js`
+  → `GET /admin/integrity` (`pass:true` on all four checks) → confirmed a
+  non-admin gets `403 FORBIDDEN` on that same route. Applied Codex's new
+  migration (`004_admin_integrity_grants_codex.sql` — `txn_svc` SELECT on
+  the integrity views). Committed everything together (`1dd13d2`).
+- `git fetch` then showed `origin/main` had diverged (Antigravity pushed
+  Round 2 — HOLD/undo-window transfers — on a branch that also picked up an
+  intermediate UI-spec-doc commit). Merged (`git merge origin/main`, no
+  conflicts — Antigravity's changes and mine touched disjoint files exactly
+  as the task-file ownership boundaries intended). Antigravity extended
+  `MoveMoneyParams` with optional `senderAccountId`/`receiverAccountId`
+  overrides plus `state`/`settleAfter`/`outboxTopic` — option 1 from
+  `TASKS_ANTIGRAVITY.md`'s two suggested approaches — and added
+  `sweeper.service.ts`. Rebuilt clean, ran their
+  `scripts/test-antigravity-round2.js` end to end (below/above threshold,
+  cancel-within-window, sweeper auto-settle, late-cancel-after-settle all
+  `409`, conservation/drift/negative clean throughout) — all green. Re-ran
+  the simulator's LEDGER group against the same, now busier database — still
+  7/7.
+
+**The backend is now fully integrated and demoable**: register, login,
+transfers (plain + HOLD/undo), reversals, disputes (+ admin resolve),
+money requests, shared bills, and admin integrity all work over real HTTP
+against the real ledger, with conservation holding throughout. Remaining
+open items tracked in `TASKS_CLAUDE.md`'s checklist.

@@ -14,7 +14,7 @@ section).
 |---|---|---|
 | Codex | Bootstrap + `AuthModule` + `QueryModule` + `AdminModule` | ✅ **done, verified end-to-end** |
 | Antigravity | Round 1: Disputes, Bill Payment 1:1, Shared Bill Payment | ✅ **done, verified** — `node scripts/test-antigravity.js` all green, conservation holds |
-| Antigravity | Round 2: HOLD / 60-second undo window | 🔵 assigned, in progress |
+| Antigravity | Round 2: HOLD / 60-second undo window | ✅ **done, verified** — `node scripts/test-antigravity-round2.js` all green |
 
 **The whole app now boots and works.** `apps/api` builds clean, every
 module (`AuthModule`, `QueryModule`, `TransfersModule`, `ReversalsModule`,
@@ -55,7 +55,7 @@ bootstrap lands.
 - [x] Codex: `QueryModule` — done, verified
 - [x] Codex: `AdminModule` (+ registering the already-built `AdminDisputesController`) — done, verified
 - [x] Antigravity Round 1: `DisputesModule`, `RequestsModule`, `BillsModule` — done, verified
-- [ ] Antigravity Round 2: HOLD/undo-window transfers
+- [x] Antigravity Round 2: HOLD/undo-window transfers — done, verified
 - [x] Claude: wire everything into `app.module.ts` — Codex did this directly, verified correct
 - [x] Claude: end-to-end smoke test (register → login → balance → lookup → transfer → admin integrity) + the three invariant views — all clean
 - [x] Claude: `sim/` scenario simulator, LEDGER group (`LED-01..07`) — 7/7, see `CLAUDE_BUILD_LOG.md`
