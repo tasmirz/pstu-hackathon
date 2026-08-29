@@ -48,6 +48,13 @@ export const CON_02: Scenario = {
     const amount = Math.floor(balance / 3) + 100; // 3x this exceeds balance
     const before = balance;
 
+    await ctx.adminPool.query(
+      `INSERT INTO ledger.limit_overrides (user_id, daily_send_limit, set_by, reason)
+       VALUES ($1, 1000000000, $1, 'simulator: CON-02 balance race')
+       ON CONFLICT (user_id) DO UPDATE SET daily_send_limit = EXCLUDED.daily_send_limit`,
+      [a.user.id],
+    );
+
     const su = await ctx.client.stepUp(a.access_token, 'PIN', a.pin);
     const results = await Promise.all(
       Array.from({ length: 5 }, () =>
@@ -145,14 +152,18 @@ export const CON_04: Scenario = {
 
     // Exactly one of two valid outcomes: cancelled (money returned) or
     // settled-by-sweeper (money gone to receiver). Never both, never nothing.
-    // Check the ORIGINAL txn only — its HOLD_CANCEL/HOLD_SETTLE child is always
-    // COMPLETED and would otherwise make "both" appear true.
-    const { rows } = await ctx.adminPool.query(
+    const original = await ctx.adminPool.query<{ state: string }>(
       `SELECT state FROM ledger.transactions WHERE id = $1`,
       [txnId],
     );
-    const original = rows[0]?.state;
-    ctx.expect(['CANCELLED', 'COMPLETED'].includes(original), `original is CANCELLED or COMPLETED (got ${original})`);
+    const children = await ctx.adminPool.query<{ kind: string; state: string }>(
+      `SELECT kind, state FROM ledger.transactions WHERE parent_txn_id = $1 ORDER BY id`,
+      [txnId],
+    );
+    ctx.expectEq(children.rows.length, 1, 'exactly one resolution transaction');
+    const expectedKind = original.rows[0].state === 'CANCELLED' ? 'HOLD_CANCEL' : 'HOLD_SETTLE';
+    ctx.expectEq(children.rows[0].kind, expectedKind, 'resolution child matches original terminal state');
+    ctx.expectEq(children.rows[0].state, 'COMPLETED', 'resolution child completed');
     const after = await ctx.balance(a);
     ctx.expect(after >= 0, 'sender balance never negative');
     void cancel;
