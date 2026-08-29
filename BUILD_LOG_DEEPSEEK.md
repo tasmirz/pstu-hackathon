@@ -11,6 +11,65 @@ design system "Kinetic Ledger" (`assets/da43ec6052af406ab60038e603948426`).
 
 ---
 
+## 2026-08-29 — Reputation indicator + LOW step-up, frozen banner, REVERSAL row
+
+### What changed
+
+**Stitch** (project `12103859305734439630`) — six screens edited in place, all
+confirmed via `get_screen` (title + DOM-op events from each `edit_screens` call):
+
+| Stitch screen | id | Change | UI_SPEC § |
+|---|---|---|---|
+| Send Money - Step 1 | `c03976b621864e2d92fae08fe5e267aa` | reputation dot + tier label on resolved recipient row | §4 step 1 |
+| Send Money - Step 2 (Confirm) | `f0ca9788f9614a0fa861f56abbcc5c9a` | LOW-trust state: `● Low trust` on recipient + unconditional step-up with its own lead-in | §4 step 2 |
+| Request Money - Step 1 (create) | `d8b8f390bb8a46c08e1800b4fcb1e242` | reputation dot + `Good` on resolved payer name | §8 create |
+| Create a Bill | `d1e44e5cd924436a9e8301dd0e486643` | reputation dot per participant chip (Karim `● Good`, Nadia `● Fair`) | §11 create |
+| Dashboard | `fdf0d88655ea46f4974f976d0f8b3b48` | frozen-account banner (`error-container`) + Send visibly disabled, Request stays enabled — state variant, not a new screen | §3 |
+| Transaction History | `c636509a89fa4fccb10f166f39f4a78f` | `REVERSAL` row → `Reversed: Sent ৳500 to wrong number` link + `Original: TXN_01J8XKQ4...` mono caption + `+৳500.00` credit | §5 |
+
+**`UI_SPEC.md`** — updated to match:
+- §3 / §4 step 1 / §4 step 2 / §5 / §8 create / §11 create each now carry their Stitch screen id.
+- New **Reputation** note at §4 step 1 pointing at `API.md` **"Reputation"** (mirrors how §6b/§6c point at the Disputes contract), including the honest-fault-limitation framing — soft trust signal, never an accusation.
+- §4 step 2 gained the `LOW_REPUTATION_RECIPIENT` step-up reason (same inline field, new reason).
+
+### Reputation indicator — design decisions worth keeping
+
+- **Compact dot + one-word label**, inline next to the resolved name; the **name stays the dominant element** (same hierarchy principle as the first-name+initial masking decision). `EXCELLENT`/`GOOD` → `#059669` green, `FAIR` → `#b45309` amber, `LOW` → `#ba1a1a` red with label **"Low trust"**. No border, no icon, no badge padding — it must not fight the name for attention.
+- Reused verbatim on every screen that resolves a recipient/counterparty from a phone lookup: Send step 1, Request create, and **each** Create-a-Bill participant chip (they're all lookup results).
+- LOW step-up on Confirm reuses the existing inline field, only the *reason* changes — the mock shows the lead-in *"This recipient has a low trust score — please verify to continue."* in the same `error-container` alert slot as the duplicate-send warning.
+- Frozen state keeps Send **disabled but visible** (`surface-variant`, `cursor-not-allowed`) — a hidden button where one used to be reads as broken on stage.
+
+### ⚠ Concurrent/conflicting activity noticed
+
+- The repo is mid-merge from another agent's backend work (staged changes in
+  `apps/api/...`, `sim/run.ts` + `sim/scenarios/idempotency.ts` in conflict). My
+  track left those untouched; `UI_SPEC.md` + this build log are the only files I
+  changed.
+- **Duplicate Transaction History screen** `ae56b83431934f7c82157d2f8ce504bc`
+  ("Transaction History - Linked Reversal") was created by a timed-out retry of my
+  first Transaction History edit. The canonical screen is `c63650...` (edited in
+  place). The `ae56b83...` duplicate cannot be deleted via the Stitch MCP surface
+  — **flag for manual cleanup** so the frontend builder doesn't wire the wrong one.
+- The concurrent **Request Money - Create** (`d41cc673b30341079b4e68c84942fa63`)
+  still exists alongside my canonical **Request Money - Step 1** (`d8b8f390...`,
+  which UI_SPEC §8 names as the create screen). I edited `d8b8f...` only — no fork.
+  The `d41cc...` screen is still a candidate to reconcile/remove.
+- Note: earlier `list_screens`/`get_project` returned a *partial* screen list that
+  omitted several screens I built last round (Send Step 3, Inbox/Outbox, My
+  Disputes, Limits, Create a Bill, Shared Bill Detail) — those all still exist and
+  were confirmed via `get_screen`. Treat the list API as paginated, not exhaustive.
+
+### Verified
+
+- All six screens above confirmed present via `get_screen` (title + id match; each
+  `edit_screens` call returned a `project.file_update` DOM-op event for its target
+  screen). Post-edit HTML/screenshot download URLs are content-addressed cached
+  snapshots and did not refresh, so the DOM-op events are the authoritative record.
+- `git diff UI_SPEC.md` reviewed — only `UI_SPEC.md` (+ this build log) modified in
+  my track; no backend/frontend/infra files touched.
+
+---
+
 ## 2026-08-29 — Money Requests screen + feature-complete screen set for other agents' tracks
 
 ### What changed

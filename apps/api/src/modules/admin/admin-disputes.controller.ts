@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { CurrentUser, IdempotencyKey, StepUpToken } from '../../common/decorators';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { AdminGuard } from '../../common/guards/admin.guard';
@@ -24,6 +24,7 @@ export class AdminDisputesController {
   }
 
   @Post(':id/resolve')
+  @HttpCode(200)
   resolve(
     @CurrentUser() user: { id: number },
     @Param('id', ParseIntPipe) id: number,

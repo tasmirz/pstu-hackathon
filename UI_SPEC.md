@@ -134,6 +134,12 @@ States:
 
 ## 3. Dashboard — **P0**
 
+**Designed in Stitch** as *Dashboard* (project `12103859305734439630`, screen
+`fdf0d88655ea46f4974f976d0f8b3b48`): live balance + held line, Send/Request buttons,
+HOLD undo bar (§9), Recent Activity, Daily Limit card. The **frozen-account banner**
+is a state variant drawn on the same screen (red banner + disabled Send), not a
+separate screen.
+
 ```
 ┌────────────────────────────────────────┐
 │  ৳ 97,500.00                          │  ← large, top-left, updates LIVE
@@ -158,7 +164,7 @@ States:
 - Balance from `GET /accounts/me/balance` on load — **hits the primary**, per read-your-own-writes.
 - Balance **also** updates from the Centrifugo `txn.completed` event with no refetch. **This is the live-update demo moment.** Flash/highlight the number with a CSS transition when it changes — do **not** cover it with a toast, the number is the point.
 - `held_paisa` renders as its own line whenever non-zero, so money that has left but not arrived never looks like missing money.
-- `status = FROZEN` → red banner: *"Your account is frozen. You can still receive money."* Send button **disabled, not hidden** — hidden makes the demo look broken when someone taps where it used to be.
+- `status = FROZEN` → red banner: *"Your account is frozen. You can still receive money."* Send button **disabled, not hidden** — hidden makes the demo look broken when someone taps where it used to be. Drawn in Stitch on the Dashboard screen as a state variant: `error-container` banner + Send greyed with `cursor-not-allowed` (Request stays enabled — receiving still works).
 
 ---
 
@@ -167,6 +173,11 @@ States:
 Each step is its own screen or modal. **Never collapse them into one form.** The step boundary is what makes recipient confirmation and the duplicate-send guard read as deliberate features rather than incidental validation.
 
 ### Step 1 — Recipient + amount
+
+**Designed in Stitch** as *Send Money - Step 1* (project `12103859305734439630`,
+screen `c03976b621864e2d92fae08fe5e267aa`): phone field → resolved-recipient
+row with the **reputation indicator** inline (`✓ Karim U. ● Good`), amount with
+balance caption + Use Max, optional note, full-width **Continue to Review**.
 
 ```
 To      [ +8801798765432                    ]
@@ -182,11 +193,20 @@ Amount  [ ৳ 0.00 ]        Note  [ optional ]
 
 - Lookup returns **first name + last initial** (`Karim U.`) — enough to catch a typo, not enough to harvest a phonebook. See `API.md`.
 - `is_first_time: true` → warning chip, and expect a step-up challenge at step 2.
-- **Reputation dot** — from `reputation.tier` in the same lookup response: `EXCELLENT`/`GOOD` green, `FAIR` amber, `LOW` red with the label *"Low trust — extra verification required"*. `score < 30` (`LOW`) means step-up is coming at step 2 regardless of amount (`reason: LOW_REPUTATION_RECIPIENT`) — same inline step-up pattern as the amount-threshold and first-time-recipient cases, not a separate flow. **Never block sending outright on a low score** — it's a signal for the human to weigh, not a ban; the system already has step-up for exactly this reason. State this plainly if asked: reputation informs, it doesn't gate.
+- **Reputation indicator** — a compact colored dot + one-word tier label, from `reputation.tier` in the same lookup response. **The name stays the visually dominant element** — this is a secondary signal, not equal billing (same hierarchy principle as the first-name-plus-initial masking). Contract & honest limitation in `API.md` **"Reputation"**: the score is a deliberately coarse, explainable proxy (completed txn count, account age, disputed-then-reversed history, FROZEN status) that **cannot determine fault** in a dispute — tone it as a soft trust signal, never an accusation.
+  - `EXCELLENT` → green dot + `Excellent` · `GOOD` → green dot + `Good`
+  - `FAIR` → amber dot + `Fair`
+  - `LOW` → red dot + `Low trust`
+  - Reuse the same dot+label pattern wherever a resolved recipient/counterparty appears from a phone lookup (§8 create, §11 create).
+- `score < 30` (`LOW`) means step-up is coming at step 2 **regardless of amount** (`reason: LOW_REPUTATION_RECIPIENT`) — same inline step-up pattern as the amount-threshold and first-time-recipient cases, not a separate flow. **Never block sending outright on a low score** — it's a signal for the human to weigh, not a ban; the system already has step-up for exactly this reason. State this plainly if asked: reputation informs, it doesn't gate.
 - Self-transfer: reject client-side immediately on own phone number, inline message. The backend rejects it too; this just saves a round trip.
 - Amount: numeric keypad on mobile, currency-formatted, converted to integer paisa on submit. **No float ever touches the network.**
 
 ### Step 2 — Confirm  ← *this screen is the recipient-confirmation feature*
+
+**Designed in Stitch** as *Send Money - Step 2* (project `12103859305734439630`,
+screen `f0ca9788f9614a0fa861f56abbcc5c9a`): amount + recipient pill with the
+reputation indicator, warning alert, inline step-up field, Cancel / Confirm & Send.
 
 ```
         You're sending
@@ -198,6 +218,7 @@ Amount  [ ৳ 0.00 ]        Note  [ optional ]
   ⚠ You sent ৳500 to this number 90 seconds ago.
      Send again?                          [ Yes, send ]
 
+  ⚠ This recipient has a low trust score — please verify to continue.
   ── step-up, inline, only when required ──
   Enter your 6-digit code   [ ______ ]
 
@@ -207,6 +228,7 @@ Amount  [ ৳ 0.00 ]        Note  [ optional ]
 - **The name in large type is the whole point.** A mistyped digit resolves to a different person and the user catches it here, not after the money has gone.
 - Duplicate-send guard: check a client-side cache of recent sends (same recipient, similar amount, <120s) and show the warning inline requiring an extra tap. Don't wait on a backend round-trip to display it — the backend velocity check is the real guard, this is the humane one.
 - Step-up appears **inline on this screen**, never as a separate page. Don't make the user lose their place mid-transfer.
+- **LOW-reputation reason**: when the resolved recipient is `LOW` tier, the inline step-up prompt appears **unconditionally** (not only for first-time/large-amount), with its own lead-in line — *"This recipient has a low trust score — please verify to continue."* — rather than the generic first-time-recipient or amount-threshold copy. It is the **same inline field**, just a new *reason* it appears. This is `reason: LOW_REPUTATION_RECIPIENT` in `API.md` "Reputation".
 
 ### Step 3 — Result
 
@@ -222,6 +244,11 @@ Amount  [ ৳ 0.00 ]        Note  [ optional ]
 
 ## 5. Transaction History — **P0**
 
+**Designed in Stitch** as *Transaction History* (project `12103859305734439630`,
+screen `c636509a89fa4fccb10f166f39f4a78f`): searchable ledger table with
+Date / Reference & Description / Type / Status / Amount columns, Load More, and the
+**`REVERSAL` row** as a link back to the original transaction (see below).
+
 ```
 ↑ Sent ৳2,500 to Karim U.                      −৳2,500.00
   Aug 29, 3:14 PM · TRANSFER
@@ -231,13 +258,14 @@ Amount  [ ৳ 0.00 ]        Note  [ optional ]
 
 ⇄ Reversed: Sent ৳500 to wrong number            +৳500.00
   Aug 29, 11:40 AM · REVERSAL
+  ↳ Original: TXN_01J8XKQ4...
 
                                           [ Load more ]
 ```
 
 - **Keyset pagination.** "Load more" sends `cursor=<last id>`, never a page number. Matches the backend and gives infinite scroll for free later.
 - Debits: red, `−`. Credits: green, `+`. `kind` is a small caption, never the headline — a normal user reads *amount* and *counterparty*, not `REQUEST_SETTLE`.
-- A `REVERSAL` row shows the *"Reversed: …"* prefix linking to the original. **This is where you prove reversals are new rows rather than edits, without saying a word.**
+- A `REVERSAL` row shows the *"Reversed: …"* prefix **linking back to the original transaction** — the Stitch row renders `Reversed: Sent ৳500 to wrong number` as a primary-color link with an `↳ Original: TXN_01J8XKQ4...` mono caption, and the amount as a `+` credit (a reversal of a sent transfer returns the money). **This is where you prove reversals are new rows rather than edits, without saying a word.**
 - Filters (P1): sent / received / reversed.
 
 ---
@@ -379,7 +407,13 @@ are the whole feature; there's no separate "Bill Payment" endpoint. §12 below
 is the *shared* version — several people owing one bill.
 
 **Create** — mirrors Send step 1, with no money moving and no step-up.
-**Designed in Stitch** as *Request Money - Step 1* (project `12103859305734439630`), following the Send Money - Step 1 layout: phone field with resolved-recipient chip, amount with balance caption + Use Max, optional note, and a consent info strip — *"Creating a request moves no money. Alam sees your request and approves it before any money leaves."* — then the full-width **Send Request** button.
+**Designed in Stitch** as *Request Money - Step 1* (project `12103859305734439630`,
+screen `d8b8f390bb8a46c08e1800b4fcb1e242`), following the Send Money - Step 1 layout:
+phone field with resolved-recipient chip carrying the **reputation indicator**
+(`✓ Alam H. ● Good` — same dot+label pattern as §4 step 1), amount with balance
+caption + Use Max, optional note, and a consent info strip — *"Creating a request
+moves no money. Alam sees your request and approves it before any money leaves."*
+— then the full-width **Send Request** button.
 ```
 Request from  [ phone ] → ✓ Alam H.
 Amount        [ ৳ 0.00 ]     Note [ optional ]
@@ -464,7 +498,13 @@ every piece here is a recombination of those two, not new mechanics.
 
 ### Create
 
-**Designed in Stitch** as *Create a Bill* (project `12103859305734439630`): bill-title input, per-row phone + share amount with resolved-recipient chips and remove buttons, "＋ Add another person", computed **Total ৳800.00**, the *"Creating a bill moves no money"* consent strip, and the full-width **Create Bill** button.
+**Designed in Stitch** as *Create a Bill* (project `12103859305734439630`, screen
+`d1e44e5cd924436a9e8301dd0e486643`): bill-title input, per-row phone + share amount
+with resolved-recipient chips each carrying the **reputation indicator** (`● Good`,
+`● Fair` — every participant is a phone-lookup result, so each chip shows the same
+dot+label pattern as §4 step 1), remove buttons, "＋ Add another person", computed
+**Total ৳800.00**, the *"Creating a bill moves no money"* consent strip, and the
+full-width **Create Bill** button.
 ```
 Bill title    [ Dinner at Kacchi Bhai              ]
 

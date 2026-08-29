@@ -230,12 +230,19 @@ export class DisputesService {
     } catch (err: any) {
       // Record failure attempt outside the rolled-back transaction
       try {
-        await this.pool.query(
+        const updateRes = await this.pool.query(
           `UPDATE ledger.disputes
            SET attempts = attempts + 1, last_attempt_at = now(), last_attempt_error = $1
-           WHERE id = $2`,
+           WHERE id = $2 RETURNING attempts, state`,
           [err.message || 'Resolution failed', disputeId],
         );
+        if (err.code === 'INSUFFICIENT_FUNDS' && updateRes.rows[0]) {
+          err.details = {
+            ...(err.details || {}),
+            dispute_state: updateRes.rows[0].state,
+            attempts: updateRes.rows[0].attempts,
+          };
+        }
       } catch {
         // Suppress secondary logging error so primary error is returned
       }

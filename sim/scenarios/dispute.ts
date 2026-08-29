@@ -279,8 +279,8 @@ export const DIS_11: Scenario = {
     );
     ctx.expectEq(rows.length, 1, 'audit row exists');
     ctx.expectEq(rows[0].actor_id, admin.user.id, 'actor is admin');
-    const before = JSON.parse(rows[0].before);
-    const after = JSON.parse(rows[0].after);
+    const before = typeof rows[0].before === 'string' ? JSON.parse(rows[0].before) : rows[0].before;
+    const after = typeof rows[0].after === 'string' ? JSON.parse(rows[0].after) : rows[0].after;
     ctx.expectEq(before.state, 'OPEN', 'before state OPEN');
     ctx.expectEq(after.state, 'REJECTED', 'after state REJECTED');
   },
