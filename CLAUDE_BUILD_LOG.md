@@ -7,6 +7,67 @@ new entries go in **this** file. Newest entry on top.
 
 ---
 
+## 2026-08-29 — The real rubric surfaced: full redistribution around `EXTRA_FEATURES_AUDIT_AND_DESIGN.md`
+
+Codex's Round 4 landed clean (CONCURRENCY/HOLD/REVERSAL/LIMITS all green —
+no real race, `CON-04`'s apparent double-win was the scenario checking the
+reversal child's state instead of the original's). Antigravity's Rounds
+5/6 also landed (`GET /money-requests/incoming`+`/outgoing`, notification
+writes off `moveMoney` + `GET /notifications`). DeepSeek, meanwhile,
+independently picked up and fixed the whole remaining sim board (their own
+initiative, outside their assigned track) to **83/83, conservation held**
+— their build log has the exact per-scenario root causes, all scenario-
+contract drift, no real backend bugs found beyond what Codex already
+fixed.
+
+**The bigger event**: Codex, unprompted, found `D:\PSTUHACK\selected_extra_features.md`
+— a file living *outside* this repo that turns out to be the actual
+grading rubric for 5 "extra" features (Bill Split, Send Money to a Group,
+Institute Bill Payment, Dispute Management, Reputation-Based Fraud
+Detection) and wrote `EXTRA_FEATURES_AUDIT_AND_DESIGN.md`, a thorough gap
+analysis of the current codebase against every one of them — full data
+models, every edge case, a Mermaid diagram per case. This changes the
+priority list: everything built so far (disputes, bill payment, shared
+bill payment, reputation) was the *right foundation*, but the rubric is
+specifically grading extensions to it that don't exist yet.
+
+Read the whole audit and re-planned the next round around it:
+
+- **Dispute Management** (audit §5) is the highest-value gap — its missing
+  piece (escrow-on-open + a recoverable-deficit workflow when the receiver
+  already spent the disputed money) is almost the spec's flagship worked
+  example verbatim. The current code correctly *fails safe* here today
+  (`402`, dispute stays `OPEN`) rather than fabricating money — this round
+  makes that case actually resolve instead of dead-ending.
+- **Bill Split** (audit §2) needs equal-split mode and safe partial
+  payment within one share — the current custom-shares/one-shot-pay
+  implementation is solid but narrower than the spec asks for.
+- **Institute Bill Payment** (audit §4) doesn't exist at all yet, and
+  Codex already fully designed it — natural to have them build what they
+  scoped, and it's a clean, disjoint new module.
+- **Send Money to a Group** (audit §3) doesn't exist either, and is the
+  single biggest lift of the five — queued as a stretch goal, after the
+  two above, per the audit's own recommended build order.
+- **Reputation extensions** (audit §6) are deliberately left out this
+  round — the audit's own recommended order puts them last, since
+  attributing fault correctly needs the dispute-recovery typed outcomes
+  from Round 7 to exist first.
+
+Per the user's explicit instruction, gave Antigravity the bulk of it
+(Rounds 7/8/9 — dispute recovery, bill split completion, group send
+stretch, "everything remaining"), Codex a clean self-contained new feature
+they'd already designed (Institute Bill Payment), DeepSeek the UI for all
+of it plus their still-unstarted Round 3 backlog, and kept my own new
+scope to the coordination docs themselves — no new SQL or app code this
+round, both backend agents own their own migrations for the new tables
+(with an explicit ask to flag the exact grants added, since a forgotten
+`GRANT USAGE ON SCHEMA` has been the one recurring real bug class this
+project has hit — reputation and notifications both needed a follow-up
+grant fix after the fact).
+
+Rewrote `TASKS_CODEX.md`, `TASKS_ANTIGRAVITY.md`, `TASKS_DEEPSEEK.md`, and
+`TASKS_CLAUDE.md` to reflect the new priority list end to end.
+
 ## 2026-08-29 — Re-checked Codex R4 (not landed yet), queued Antigravity Round 6: notification writes
 
 User asked to check whether Codex's Round 4 (CONCURRENCY/HOLD/REVERSAL/

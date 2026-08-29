@@ -1,58 +1,99 @@
-# Assignment: DeepSeek — Round 3: Remaining Demo UI States
-
-## Previous rounds — complete
-
-The core Kinetic Ledger screen set, reputation indicators, LOW-reputation
-step-up state, frozen Dashboard, and linked REVERSAL history row are complete
-and logged in `BUILD_LOG_DEEPSEEK.md`.
+# Assignment: DeepSeek — UI for the 3 selected features with no screens yet
 
 Continue in Stitch project **Ledger Flow Money Movement**
-(`12103859305734439630`) and keep backend/frontend code untouched.
+(`12103859305734439630`), design system **Kinetic Ledger**. Keep
+backend/frontend code untouched, same as always.
 
-## 1. Notification feed
+**Context**: Codex found `D:\PSTUHACK\selected_extra_features.md` — the
+actual scoring rubric, outside this repo. Their gap analysis,
+`EXTRA_FEATURES_AUDIT_AND_DESIGN.md`, is the source of truth for this
+round — **read it before starting**, especially the Mermaid flow for each
+feature, so the screens you design actually match the states the backend
+will produce (Codex is building Institute Bill Payment, Antigravity is
+building Dispute recovery + Bill Split completion + a Group Send stretch,
+in that priority order — don't wait for all three to land before starting;
+design against the documented behavior, same as you've done all session).
 
-Design the P2 notification feed from `UI_SPEC.md` §10:
+## Priority 1 — Dispute recovery status (Antigravity, Round 7)
 
-- unread/read states and an unread Dashboard indicator;
-- transaction received/sent, request, reversal, and limit-warning examples;
-- tap target leading to the relevant transaction/request;
-- empty state and concise event timestamps.
+The one new *state*, not a new screen: when a dispute resolves and the
+receiver couldn't cover the full disputed amount, the outcome is a partial
+refund plus a `recovery_due` balance on the other party — not the clean
+full-refund state your existing **My Disputes** (§6c) screen shows today.
+Add this as a state variant:
 
-Keep this honest as a design state: the Kafka consumer is still deferred, so
-do not describe the event pipeline as currently live.
+- On the disputer's side: "Partially refunded — ৳X of ৳Y recovered
+  immediately, the remaining ৳Z is being recovered from the other party."
+  Honest, not "refund pending" (the secured portion already moved).
+- No screen needed for the debtor's `recovery_due` this round unless you
+  have time — flag it as backlog if you skip it (a "recovery_due" state on
+  someone's own account/dashboard is real but not blocking dispute-side
+  clarity).
 
-## 2. Duplicate-send guard warning
+## Priority 2 — Bill Split: equal split + partial payment (Antigravity, Round 8)
 
-Add the deferred warning state to Send Money confirmation. It must reuse the
-existing inline warning/step-up placement and clearly distinguish:
+Edit **Create a Bill** (§11 create) to add the split-mode choice
+(equal/custom) — equal mode only needs total + participant list, no
+per-person amount entry; show the computed per-person split before
+confirmation (the remainder-distribution rule means it won't always be
+perfectly even — e.g. ৳100/3 → 34/33/33 — show it plainly rather than
+implying it's exact division). Edit **Shared Bill Detail** (§11) to show a
+per-share progress state (`PARTIALLY_PAID` — a progress indicator or
+"৳X of ৳Y paid" rather than only PENDING/PAID as today).
 
-- retrying the same idempotency key (safe replay), and
-- a genuinely new, similar transfer that may be accidental.
+## Priority 3 — Institute Bill Payment (Codex, new feature)
 
-Do not add a new modal or compete visually with the recipient and amount.
+New screens — this doesn't exist in any form yet. Reference audit §4 for
+the exact states (`accepted_at <= deadline` is the one rule everything
+hangs off). Minimum set:
+- A bill list/detail (tuition/hall/exam fee, amount, **deadline
+  countdown** — this is the one visual element that matters, since the
+  spec's whole point is "does it read clearly whether you made the cutoff")
+- A confirmation state distinguishing "accepted before deadline, still
+  processing" from "rejected — deadline passed" — these must look
+  meaningfully different, not just a color swap, since a student's actual
+  money is on one side of that line.
 
-## 3. Admin simulator presentation
+## Priority 4 — Send Money to a Group (Antigravity, stretch — design regardless)
 
-Design the admin-side simulator results state as a presentation surface, not a
-new backend promise: grouped pass/fail counts, conservation summary, failing
-scenario IDs, and a clear note that execution is launched by the demo/operator
-until an API trigger exists.
+Worth designing even though the backend is a stretch goal for this round —
+if the backend doesn't land, at least the screen exists and the story is
+tellable. Minimum: a recipient-list entry (bulk-ish, doesn't need to be
+1,000 rows — 3-5 rows communicates the concept), a per-recipient outcome
+list after submission (success/pending/failed, matching GP-02's mixed-
+outcome example from the spec — this is the one visual that makes "we
+don't all-or-nothing a batch" legible to a judge in five seconds).
 
-## 4. Canonical-screen cleanup record
+## Backlog — still real, still unclaimed, do if time remains
 
-Recheck the duplicate Transaction History and Request Money screens noted in
-the last build log. If Stitch still cannot delete them, explicitly mark the
-canonical IDs in `UI_SPEC.md` and the build log so frontend implementation
-cannot select the wrong screen.
+From the last (unstarted) round, still worth doing in this priority order:
+1. **Notification feed** (`UI_SPEC.md` §10) — now has a real backend
+   behind it (Antigravity's Round 6, `GET /notifications`) — unread/read
+   states, an unread Dashboard indicator, tap-through to the relevant
+   transaction/request.
+2. **Duplicate-send guard warning** on Send Money confirmation.
+3. **Admin simulator presentation** — grouped pass/fail counts, the
+   conservation summary, failing scenario IDs as a presentation surface
+   (execution is demo/operator-launched, not an API trigger — be honest
+   about that in the design).
+4. **Canonical-screen cleanup** — the duplicate Transaction History /
+   Request Money screens flagged in earlier build log entries; if Stitch
+   still can't delete them, mark the canonical IDs explicitly in
+   `UI_SPEC.md` so nobody implements the wrong one.
 
 ## Deliverables and verification
 
-- Confirm every changed screen with `get_screen`.
-- Update only `UI_SPEC.md` and `BUILD_LOG_DEEPSEEK.md` in git.
-- Add screen IDs beside each touched spec section.
-- Log remaining manual cleanup or connector limitations.
+- Confirm every changed/created screen with `get_screen`.
+- Update `UI_SPEC.md` — new numbered sections for Institute Bill Payment
+  and Group Send (after §11), state-variant notes on §6c/§11 for the
+  other two. Screen ids next to every section you touch, same discipline
+  as every prior entry.
+- Log in `BUILD_LOG_DEEPSEEK.md` — what changed, screens table, anything
+  concurrent/conflicting noticed, what's still undesigned.
+- Confirm `git diff` touches only `UI_SPEC.md` + your build log — no
+  backend/frontend/sim files, same rule as always.
 
 ## Out of scope
 
-TOTP enrolment remains deferred because the backend does not ship TOTP.
-Do not touch `apps/api/**`, `frontend/**`, `sim/**`, or infra.
+TOTP enrolment. Don't touch `apps/api/**`, `frontend/**`, `sim/**`, or
+infra.

@@ -1,158 +1,156 @@
 # Assignments: Antigravity
 
-## Round 5 — `GET /money-requests/incoming` + `/outgoing` (in progress / next up)
+You're getting everything remaining on the backend this round — Rounds
+5/6 below are done and verified; **7, 8, and 9 are new**, in priority
+order. Work them in order; 9 is a stretch goal, not a requirement.
 
-If you haven't started this yet, do it first — it's still the more urgent
-gap (DeepSeek's Inbox/Outbox screens have nothing to bind to without it).
-Full brief below, unchanged. If it's already done and pushed, skip straight
-to **Round 6**.
-
-## Rounds 1–4 — done, verified, thank you
+## Rounds 1–6 — done, verified, thank you
 
 Disputes/Bill Payment/Shared Bill Payment (R1), HOLD/undo (R2), reputation
-step-up enforcement (R3), and full HTTP simulator coverage for your own
-modules — `sim/scenarios/dispute.ts` (11/11), `bills.ts` (5/5), `requests.ts`
-(5/5) (R4) — all verified live by Claude. Full non-chaos `sim` run is
-70/81; the remaining 11 (CONCURRENCY/HOLD/REVERSAL/LIMITS + one chaos
-timing test) are Codex's Round 4, actively in progress — **stay out of
-`transfers.service.ts` and `reversals.service.ts` until that lands**, same
-as last round.
+step-up enforcement (R3), full HTTP sim coverage for your own modules (R4),
+`GET /money-requests/incoming`+`/outgoing` (R5), and notification writes off
+`moveMoney` + `GET /notifications` (R6) are all live — confirmed via the
+routes existing, clean build, and the full sim board DeepSeek ran to
+**83/83, conservation held**. Codex's Round 4 (CONCURRENCY/HOLD/REVERSAL/
+LIMITS) is also done — you're clear to touch `transfers.service.ts` and
+`reversals.service.ts` again this round.
 
-Also: Claude noticed `sim/scenarios/disputes.ts` (your R4 delivery) and the
-pre-existing `sim/scenarios/dispute.ts` both claimed ids `DIS-01..05` with
-different bodies — merged the one thing `disputes.ts` had that `dispute.ts`
-didn't (the reputation-drop check, now `DIS-12`) and removed `disputes.ts`.
-Nothing for you to do about it.
-
----
-
-## Round 5 (full brief)
-
-`API.md` documents two endpoints that were never actually built:
-
-> **`GET /money-requests/incoming?state=`** · **`GET /money-requests/outgoing?state=`**
-> Expired requests are returned with `state: "EXPIRED"` and are **not**
-> silently omitted — a request that vanishes from the list reads as a bug.
-
-`RequestsController` today only has `POST /`, `POST /:id/pay`, `/decline`,
-`/cancel`, `/remind` — there is no way to *list* your money requests at
-all. Build:
-
-- **`GET /money-requests/incoming?state=&limit=&cursor=`** — requests where
-  the caller is `payer_id`.
-- **`GET /money-requests/outgoing?state=&limit=&cursor=`** — requests where
-  the caller is `requester_id`.
-
-Same keyset-pagination shape as `GET /transactions`
-(`apps/api/src/modules/query/query.service.ts`). `state=` is an optional
-exact-match filter over `ledger.money_requests.state`.
-
-**Lazy-expiry**: a `PENDING` row past `expires_at` must come back as
-`state: "EXPIRED"` — never omitted — and the DB row should actually flip
-(one `UPDATE ... WHERE state = 'PENDING' AND expires_at <= now() ...`
-swept before the list query), same as `RequestsService.remind()`'s
-existing lazy-expiry check.
-
-```jsonc
-{ "id": 77, "state": "PENDING", "amount_paisa": 120000, "note": "for the ticket",
-  "counterparty": { "id": 43, "name": "Karim U.", "phone": "+8801798765432" },
-  "expires_at": "...", "reminded_at": null, "settled_txn_id": null, "created_at": "..." }
-```
-`counterparty` is the *other* party — the requester's identity on
-`incoming`, the payer's on `outgoing`.
-
-**Verify**: add `REQ-06`/`REQ-07` to `sim/scenarios/requests.ts` (create →
-both endpoints show it; manufacture an expired one via `ctx.adminPool` →
-both endpoints show `EXPIRED`, not omitted). Add
-`incomingRequests`/`outgoingRequests` to `sim/harness/client.ts` (pure
-additions, shouldn't conflict).
+**Context that changes this round's priorities**: Codex found and audited
+`D:\PSTUHACK\selected_extra_features.md` — a file outside this repo that
+turns out to be the actual scoring rubric for 5 features (Bill Split, Group
+Payment, Institute Bill Payment, Dispute Management, Reputation). Their
+audit, `EXTRA_FEATURES_AUDIT_AND_DESIGN.md`, is excellent — **read it before
+starting each round below**, it has the full data model, every edge case,
+and a Mermaid diagram per case. This round's assignments below are scoped
+straight from it; don't redesign what's already there, implement it.
 
 ---
 
-## Round 6 — Notification writes (start once Round 5 is pushed)
+## Round 7 (do first) — Dispute Management: escrow + recovery
 
-### The feature
+This is the flagship example in the actual spec (`selected_extra_features.md`
+§4) almost verbatim: A sends B ৳5,000, B legitimately spends ৳4,000 to C
+*before* A disputes, A disputes, admin approves — refund A, don't touch
+`B→C`, and B now owes a recoverable ৳4,000. The current `DisputesService`
+correctly *fails* this case today (`402 INSUFFICIENT_FUNDS`, dispute stays
+`OPEN` — see `DIS-07`/audit §5.2) rather than fabricating money, which was
+the right thing to ship first. This round makes the case actually resolve.
 
-`SCHEMA.sql` already has the full shape for this from the original
-3-service design — `ledger.outbox` (every `moveMoney` call already writes
-a row there) and `notify.notifications` — meant for a Kafka relay that
-drains the outbox into notifications. That relay isn't running (explicitly
-deferred, `TASKS_CLAUDE.md`). Rather than half-build a relay that talks to
-nothing, **write the notification row directly, in the same transaction as
-the ledger legs** — `moveMoney` is the one place every money movement
-already funnels through. This is honestly *more* consistent than the
-eventual relay (no redelivery window to dedupe), and it's the real
-backend counterpart to DeepSeek's Round 3 Notification-feed screen design —
-right now that screen has no data to bind to.
+Read audit §5 (`DM-01..09`) in full — it has the model
+(`recovery_cases`, dispute-specific secured-amount tracking, the "secure
+on open, not on resolve" ordering, DM-03's account-lock-sharing race) and
+every edge case already worked out. Build:
 
-Claude already granted the missing permission
-(`infra/sql/006_notifications_claude.sql` — `txn_svc` can now write
-`notify.notifications`; applied, no migration needed from you) and left a
-comment there explaining exactly when this insert should move to a relay
-instead (the day an external consumer — push notifications, Centrifugo —
-needs the Kafka hop too).
+1. **Secure on dispute open, not on resolve.** When a dispute is raised,
+   lock the receiver's account (same lock the ledger writer already uses)
+   and secure `min(receiver.available, disputed_amount)` — a new
+   short-lived hold, not a ledger transaction yet. This is what makes
+   DM-03 (B tries to spend while A disputes) resolve correctly: whichever
+   operation gets the account lock first wins, same discipline as
+   `moveMoney`'s existing ascending-id lock order.
+2. **On admin REJECT**: release the secured amount back to B (a
+   compensating no-money-moved unlock, not a ledger entry — nothing left
+   this account, so nothing needs to move back).
+3. **On admin APPROVE**: pay A the secured amount via `moveMoney`
+   (`kind: 'DISPUTE_REFUND'` or similar — new kind, same pattern as
+   `REVERSAL`). If the secured amount is less than the disputed amount,
+   create a `recovery_cases` row for the deficit (debtor B, principal =
+   deficit, outstanding = deficit) — **do not** invent a platform-reserve
+   payout for the deficit this round (audit §5.3's "funded platform
+   reserve" is real but out of scope; if there's no reserve, DM-02's
+   correct behavior is: refund A only the secured amount, mark the dispute
+   partially-refunded + `recovery_due` on B, and be honest about it in the
+   response — don't pretend the full amount was refunded).
+4. **`B→C` is never touched** — this is the one invariant to test hardest.
+   Existing entries stay exactly as they are; the whole point is
+   compensating records, not edits.
+5. Skip the recovery *collection* workflow (DM-07 — future eligible
+   inflows to B paying down `recovery_due`) this round; a `recovery_cases`
+   row with an accurate `outstanding_amount` sitting there, visible on an
+   admin endpoint, is the deliverable. Collection is a natural Round 8-ish
+   follow-up once this lands.
 
-### What to build
+New tables needed (your own migration,
+`infra/sql/00N_dispute_recovery_antigravity.sql`) — model off audit §5.3:
+a way to track a dispute's secured amount (could be columns on
+`ledger.disputes` rather than a new table if that's simpler — your call,
+just keep it CAS-friendly), plus `ledger.recovery_cases`
+(debtor, dispute_id, principal, outstanding, state, timestamps). Grant
+`txn_svc` read+write, `read_svc` read — same shape as every other
+migration this project has. **Flag the exact grants in your build log** —
+this is the one recurring bug class in this project (forgotten `GRANT
+USAGE ON SCHEMA`), so a quick heads-up lets Claude sanity-check it in one
+pass instead of it surfacing later as a mystery permission-denied error.
 
-**1. In `LedgerWriterService.moveMoney`** (`apps/api/src/modules/ledger/core/ledger-writer.service.ts`),
-right after the existing `ledger.outbox` insert, insert one or two rows
-into `notify.notifications` depending on `kind`:
+**Verify**: extend `sim/scenarios/dispute.ts` with `DIS-13`
+(full DM-02 flow: B spends 80% away, dispute approved, A gets the secured
+20%, `recovery_cases` shows 80 outstanding, `B→C` untouched) and `DIS-14`
+(DM-03: concurrent spend-vs-dispute-open race, exactly one wins the
+account lock, no double-use of funds). Conservation must hold throughout —
+a recovery deficit is a receivable, not new money.
 
-| `kind` | Notify | `kind` column | Title/body shape |
-|---|---|---|---|
-| `TRANSFER` | both parties | sender: `TXN_SENT`, receiver: `TXN_RECEIVED` | "Sent ৳X to {name}" / "Received ৳X from {name}" |
-| `HOLD_SETTLE` (sweeper) | receiver only | `TXN_RECEIVED` | same as above — the sender already got their `HELD` notice at send time |
-| `HOLD_CANCEL` | sender only | — (skip; it's their own undo, not news) | — |
-| `REQUEST_SETTLE` | requester only | `REQUEST_PAID` | "{payer name} paid your request for ৳X" |
-| `BILL_SHARE_SETTLE` | bill creator only | `REQUEST_PAID` (reuse — same shape, no need for a new kind) | "{payer name} paid their ৳X share of {bill title}" — title isn't available inside `moveMoney`; pass it through `note` the way `Cancel of {ref}` already does, or read the bill row if `parentTxnId`/context is already in scope where `BillsService.pay` calls `moveMoney` |
-| `REVERSAL` | both parties | `REVERSAL` | "Reversed: {original description}" — the row `sim/scenarios/happy.ts`... actually `dispute.ts` already asserts exists on the read side; this is its notification counterpart |
-| `SIGNUP_BONUS` | skip | — | registration already shows the balance immediately, a notification adds nothing |
+## Round 8 — Bill Split: equal split + safe partial payment
 
-Don't invent new `notify.notifications.kind` values beyond the ones
-`SCHEMA.sql`'s comment already lists
-(`TXN_RECEIVED | TXN_SENT | REQUEST_NEW | REQUEST_PAID | REVERSAL |
-LIMIT_WARNING`) — `REQUEST_NEW` (a request being *created*, not paid) and
-`LIMIT_WARNING` (approaching the daily cap) both belong outside
-`moveMoney` (request creation moves no money; a limit warning isn't a
-transfer at all) — leave those two as a clearly-flagged follow-up in your
-build log rather than reaching for them here, since this round is
-specifically "hang notifications off the one function every money
-movement already goes through."
+Audit §2 — the current implementation (custom fixed shares, one-shot full
+payment per share) is solid but incomplete against the actual spec, which
+explicitly asks for **equal split** and **partial payment within one
+share**. Read `BS-01` through `BS-07` — the integer-remainder rule (BS-01)
+and the overpayment/race guard (BS-03) are the two that matter most and
+are already fully worked out with Mermaid diagrams.
 
-**2. `GET /notifications?unread=&limit=&cursor=`** and
-**`POST /notifications/:id/read`** (or `/read-all`) — a small
-`NotificationsModule` in the query/read domain (`read_svc` already has
-full read/write on `notify.notifications` from `SCHEMA.sql`, no new grant
-needed). Same keyset pagination as everywhere else. This is a new module,
-so it needs one line in `app.module.ts` — flag it in your build log rather
-than editing that file yourself; Claude will wire it in (same rule as
-every module addition since Round 1).
+1. **Equal split**: `POST /bills` gains a `split_mode: 'EQUAL'` option
+   (alongside today's implicit `CUSTOM`) — caller supplies `total_amount`
+   and a participant list (no per-participant amounts), server computes
+   `floor(total / n)` for everyone plus deterministically distributes the
+   `total % n` remainder paisa by participant order (BS-01). Store the
+   computed amounts the same way custom shares are stored today — nothing
+   downstream needs to know which mode created them.
+2. **Partial payment within one share**: add `paid_amount` to
+   `ledger.bill_shares` (or equivalent), change share `state` to include
+   `PARTIALLY_PAID`, and let `POST /bills/:id/pay` accept an optional
+   amount ≤ the share's remaining balance (default: pay it in full, same
+   as today, for backward compatibility with existing scenarios). CAS
+   condition: `paid_amount + payment <= assigned_amount`, same idempotency-
+   claim-first discipline as everywhere else (BS-03).
+3. Lock order fix (BS-05): make cancellation's lock order (bill-then-shares)
+   consistent with payment's — audit your own existing `cancel()` and
+   `pay()` for this before adding new code on top of an inconsistent base.
 
-### Verify
+**Verify**: extend `sim/scenarios/bills.ts` with `BILL-06` (equal split,
+3 participants, ৳100 → 34/33/33, sum exactly matches total), `BILL-07`
+(two participants race to pay the last ৳500 of a share — exactly one
+succeeds, same barrier-based concurrency pattern your existing `CON-*`
+scenarios already use), `BILL-08` (partial payment: pay 60% of a share,
+state is `PARTIALLY_PAID`, pay the remaining 40%, state flips to `PAID`
+and the bill auto-settles if it was the last share).
 
-New `sim/scenarios/notifications.ts` — tag `notifications`: a transfer
-generates the sender's `TXN_SENT` and receiver's `TXN_RECEIVED`, a paid
-request generates the requester's `REQUEST_PAID`, marking one read flips
-`read_at` and it drops out of `?unread=true`. Universal invariants stay
-free from `runScenario` as always — this feature touches no balances.
+## Round 9 (stretch — only if 7 and 8 are done and green)
 
-```bash
-cd apps/api && npm run start:dev
-npm run sim -w sim -- --tag notifications
-```
+**Send Money to a Group** — audit §3. This is the biggest of the three and
+the audit's own recommended order puts it after Bill Split (its
+reservation/escrow pattern reuses what Round 7 builds) and before
+Institute Bill Payment (which reuses it again — Codex is doing that in
+parallel, so there may be a shared-primitive opportunity to compare notes
+on later, but don't block on it). Scope for a stretch attempt: the **all-
+or-nothing initial reservation** (GP-03) and **per-recipient independent
+child outcomes** (GP-01/GP-02) — that's the core of the feature and the
+part every other GP-* case builds on. Skip the retry/backoff worker
+machinery (GP-04's crash-recovery reconciliation, GP-06's cancel-races-
+retry) if time runs out; a batch that reserves once and pays each child
+independently, with an itemized result, is a legitimate partial delivery
+of this feature even without background retry.
 
 ## Ownership boundaries
 
-**Yours**: `ledger-writer.service.ts` (small, additive change — the
-existing outbox insert and everything above it stays untouched), a new
-`NotificationsModule` under `modules/notifications/` or similar,
-`sim/scenarios/notifications.ts`. **Not yours right now**:
-`transfers.service.ts`/`reversals.service.ts` (Codex, R4 in progress),
-`app.module.ts` (flag the new module for Claude to wire in).
+**Yours this round**: `disputes.service.ts`, `bills.service.ts`,
+`bill-share` schema, and (if you get to Round 9) a new group-payment
+module. **Codex is in `institute-bills/`** (new module, no file overlap).
+`app.module.ts` — flag any new module for Claude to wire in.
 
 ## Explicitly out of scope
 
-TOTP, the Kafka outbox relay actually consuming `ledger.outbox` (this
-round's whole point is not needing it yet), the Centrifugo bridge, Redis
-caching, one-payer-many-payees split, load testing, chaos/Docker
-portability. Don't build these unless Claude asks.
+TOTP, the Kafka outbox relay actually consuming (notifications stay
+synchronous per Round 6's design), the Centrifugo bridge, Redis caching,
+load testing, chaos/Docker portability, and Reputation extensions (audit
+§6 — its own recommended order puts this *last*, after typed dispute
+outcomes exist from Round 7, so it's correctly not this round's job).
