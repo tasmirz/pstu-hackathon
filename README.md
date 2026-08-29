@@ -84,7 +84,7 @@ Infra is always Docker; the app runs locally against it.
 ```bash
 npm install
 npm run infra:up          # Postgres, PgBouncer, Redis, Redpanda, Centrifugo
-npm run db:apply          # SCHEMA.sql + every infra/sql/*.sql amendment, in order, idempotent
+npm run db:apply          # SCHEMA.sql + every infra/sql/*.sql amendment, in order (each file runs once ever)
 npm run dev                # apps/api, npm run start:dev, hot-reload
 npm run sim                # the scenario simulator, needs the app up
 ```
@@ -93,6 +93,13 @@ npm run sim                # the scenario simulator, needs the app up
 exists (signup bonus amount, step-up thresholds, the undo window, the
 dispute window, the reputation threshold) — copy it to `apps/api/.env`
 before the first run.
+
+A `justfile` wraps all of the above plus the ad-hoc verification scripts
+(`just --list` to see every recipe) if you have [`just`](https://just.systems)
+installed — `just bootstrap` is infra-up + db-apply in one shot,
+`just sim-tag disputes` runs one scenario group, `just promote-admin 3`
+flips a user to `ADMIN` for testing. Nothing in it does anything the `npm`
+scripts above don't already do; it's a shorter way to type them.
 
 ## Verifying it
 
