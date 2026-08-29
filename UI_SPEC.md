@@ -69,7 +69,7 @@ Map the backend's `error` code to one plain sentence each. Never show a raw code
 | 4 | Transaction History | **P0** | keyset paginated |
 | 5 | Transaction Detail | **P0** | shows both ledger legs |
 | 6 | Ledger Integrity | **P0** | *UI that sells the backend* |
-| 7 | Request Money — create | **P1** | |
+| 7 | Request Money — create | **P1** | Stitch screen **Request Money - Step 1** (designed) |
 | 8 | Request inbox / outbox | **P1** | |
 | 9 | Undo countdown | **P1** | only if the backend HELD flow shipped |
 | 10 | Reversal / raise dispute | **P1** | |
@@ -353,7 +353,8 @@ another — this screen and `POST /money-requests` / `POST /money-requests/:id/p
 are the whole feature; there's no separate "Bill Payment" endpoint. §12 below
 is the *shared* version — several people owing one bill.
 
-**Create** — mirrors Send step 1, with no money moving and no step-up:
+**Create** — mirrors Send step 1, with no money moving and no step-up.
+**Designed in Stitch** as *Request Money - Step 1* (project `12103859305734439630`), following the Send Money - Step 1 layout: phone field with resolved-recipient chip, amount with balance caption + Use Max, optional note, and a consent info strip — *"Creating a request moves no money. Alam sees your request and approves it before any money leaves."* — then the full-width **Send Request** button.
 ```
 Request from  [ phone ] → ✓ Alam H.
 Amount        [ ৳ 0.00 ]     Note [ optional ]
