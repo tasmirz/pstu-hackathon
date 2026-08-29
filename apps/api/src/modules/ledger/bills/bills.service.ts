@@ -48,8 +48,32 @@ export class BillsService {
     private readonly users: UsersRepository,
   ) {}
 
-  async create(params: CreateBillParams) {
-    const { creatorId, title, splitMode = 'CUSTOM', totalAmountPaisa: declaredTotal, shares } = params;
+  async create(
+    paramsOrCreatorId: CreateBillParams | number,
+    titleArg?: string,
+    sharesArg?: ShareInput[],
+    splitModeArg?: 'CUSTOM' | 'EQUAL',
+    totalAmountPaisaArg?: number,
+  ) {
+    let creatorId: number;
+    let title: string;
+    let splitMode: 'CUSTOM' | 'EQUAL' = 'CUSTOM';
+    let declaredTotal: number | undefined;
+    let shares: ShareInput[];
+
+    if (typeof paramsOrCreatorId === 'number') {
+      creatorId = paramsOrCreatorId;
+      title = titleArg || '';
+      shares = sharesArg || [];
+      splitMode = splitModeArg || 'CUSTOM';
+      declaredTotal = totalAmountPaisaArg;
+    } else {
+      creatorId = paramsOrCreatorId.creatorId;
+      title = paramsOrCreatorId.title;
+      shares = paramsOrCreatorId.shares;
+      splitMode = paramsOrCreatorId.splitMode || 'CUSTOM';
+      declaredTotal = paramsOrCreatorId.totalAmountPaisa;
+    }
 
     if (!shares || shares.length < 2) {
       throw new ValidationError('A shared bill must have at least 2 shares');
@@ -326,6 +350,33 @@ export class BillsService {
 
       const hasMore = rows.length > limit;
       const pageRows = hasMore ? rows.slice(0, limit) : rows;
+      const billIds = pageRows.map((r) => r.id);
+
+      const sharesRes = billIds.length > 0
+        ? await this.pool.query(
+            `SELECT bs.id, bs.bill_id, bs.amount, bs.paid_amount, bs.state, bs.settled_txn_id,
+                    u.id AS payer_id, u.name AS payer_name, u.phone AS payer_phone
+             FROM ledger.bill_shares bs
+             JOIN auth.users_public u ON u.id = bs.payer_id
+             WHERE bs.bill_id = ANY($1::bigint[])
+             ORDER BY bs.id ASC`,
+            [billIds],
+          )
+        : { rows: [] };
+
+      const sharesByBillId = new Map<number, any[]>();
+      for (const s of sharesRes.rows) {
+        if (!sharesByBillId.has(s.bill_id)) sharesByBillId.set(s.bill_id, []);
+        sharesByBillId.get(s.bill_id)!.push({
+          id: s.id,
+          payer: { id: s.payer_id, name: s.payer_name, phone: s.payer_phone },
+          amount_paisa: s.amount,
+          paid_amount_paisa: s.paid_amount,
+          remaining_paisa: s.amount - s.paid_amount,
+          state: s.state,
+          settled_txn_id: s.settled_txn_id,
+        });
+      }
 
       return {
         items: pageRows.map((r) => ({
@@ -336,6 +387,7 @@ export class BillsService {
           total_amount_paisa: r.total_amount,
           state: r.state,
           created_by: { id: r.created_by, name: r.creator_name },
+          shares: sharesByBillId.get(r.id) || [],
           created_at: r.created_at,
         })),
         next_cursor: hasMore && pageRows.length > 0 ? pageRows[pageRows.length - 1].id : null,
@@ -359,6 +411,33 @@ export class BillsService {
 
       const hasMore = rows.length > limit;
       const pageRows = hasMore ? rows.slice(0, limit) : rows;
+      const billIds = pageRows.map((r) => r.id);
+
+      const sharesRes = billIds.length > 0
+        ? await this.pool.query(
+            `SELECT bs.id, bs.bill_id, bs.amount, bs.paid_amount, bs.state, bs.settled_txn_id,
+                    u.id AS payer_id, u.name AS payer_name, u.phone AS payer_phone
+             FROM ledger.bill_shares bs
+             JOIN auth.users_public u ON u.id = bs.payer_id
+             WHERE bs.bill_id = ANY($1::bigint[])
+             ORDER BY bs.id ASC`,
+            [billIds],
+          )
+        : { rows: [] };
+
+      const sharesByBillId = new Map<number, any[]>();
+      for (const s of sharesRes.rows) {
+        if (!sharesByBillId.has(s.bill_id)) sharesByBillId.set(s.bill_id, []);
+        sharesByBillId.get(s.bill_id)!.push({
+          id: s.id,
+          payer: { id: s.payer_id, name: s.payer_name, phone: s.payer_phone },
+          amount_paisa: s.amount,
+          paid_amount_paisa: s.paid_amount,
+          remaining_paisa: s.amount - s.paid_amount,
+          state: s.state,
+          settled_txn_id: s.settled_txn_id,
+        });
+      }
 
       return {
         items: pageRows.map((r) => ({
@@ -377,6 +456,7 @@ export class BillsService {
             state: r.my_share_state,
             settled_txn_id: r.my_settled_txn_id,
           },
+          shares: sharesByBillId.get(r.id) || [],
           created_at: r.created_at,
         })),
         next_cursor: hasMore && pageRows.length > 0 ? pageRows[pageRows.length - 1].id : null,

@@ -16,6 +16,16 @@ export class AdminIntegrityController {
     return this.admin.integrity();
   }
 
+  @Get('health')
+  health() {
+    return this.admin.health();
+  }
+
+  @Get('metrics')
+  metrics() {
+    return this.admin.metrics();
+  }
+
   @Post('accounts/:id/freeze')
   @HttpCode(200)
   freeze(

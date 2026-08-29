@@ -15,6 +15,7 @@ import {
   Sliders,
   CheckCircle2,
   FileText,
+  Terminal,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 
@@ -38,6 +39,7 @@ export function Sidebar() {
   ];
 
   const proofItems = [
+    { label: 'Simulator Dashboard', href: '/simulator', icon: Terminal },
     { label: 'Ledger Integrity Proof', href: '/integrity', icon: Scale },
   ];
 
@@ -91,26 +93,30 @@ export function Sidebar() {
           );
         })}
 
-        {/* Admin Section */}
-        <div className="text-[10px] font-bold text-outline uppercase px-2 mt-5 mb-1">Operations & Admin</div>
-        {adminItems.map((item) => {
-          const isActive = pathname === item.href;
-          const Icon = item.icon;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex items-center gap-3 px-3 py-2 rounded text-xs font-semibold transition-colors ${
-                isActive
-                  ? 'bg-primary-container text-white shadow-xs'
-                  : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
-              }`}
-            >
-              <Icon className="w-4 h-4 shrink-0" />
-              <span>{item.label}</span>
-            </Link>
-          );
-        })}
+        {/* Admin Section (RBAC Protected) */}
+        {user?.role === 'ADMIN' && (
+          <>
+            <div className="text-[10px] font-bold text-outline uppercase px-2 mt-5 mb-1">Operations & Admin</div>
+            {adminItems.map((item) => {
+              const isActive = pathname === item.href;
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`flex items-center gap-3 px-3 py-2 rounded text-xs font-semibold transition-colors ${
+                    isActive
+                      ? 'bg-primary-container text-white shadow-xs'
+                      : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+                  }`}
+                >
+                  <Icon className="w-4 h-4 shrink-0" />
+                  <span>{item.label}</span>
+                </Link>
+              );
+            })}
+          </>
+        )}
 
         {/* System Proof Page */}
         <div className="text-[10px] font-bold text-outline uppercase px-2 mt-5 mb-1">Judge Verification</div>

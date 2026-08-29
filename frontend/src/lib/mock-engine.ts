@@ -1134,7 +1134,26 @@ class MockEngine {
     };
   }
 
+  private ensureAdmin(callerId?: number) {
+    let id = callerId;
+    if (!id && typeof window !== 'undefined') {
+      const token = sessionStorage.getItem('kinetic_access_token');
+      if (token && token.startsWith('mock_jwt_access_')) {
+        id = parseInt(token.replace('mock_jwt_access_', ''), 10);
+      }
+    }
+    const caller = id ? this.state.users.find((u) => u.id === id) : null;
+    if (!caller || caller.role !== 'ADMIN') {
+      throw {
+        status: 403,
+        error: 'FORBIDDEN',
+        message: 'Admin privileges required to perform this action',
+      };
+    }
+  }
+
   public async runLoadTest(): Promise<LoadTestResult> {
+    this.ensureAdmin();
     return {
       duration_ms: 2717,
       tps: 1840,
@@ -1149,6 +1168,7 @@ class MockEngine {
   }
 
   public async resolveDispute(disputeId: number, action: 'REVERSE' | 'REJECT', resolution: string) {
+    this.ensureAdmin();
     const dispute = this.state.disputes.find((d) => d.id === disputeId);
     if (!dispute || dispute.state !== 'OPEN') {
       throw { status: 409, error: 'INVALID_STATE', message: 'Dispute is not open' };
@@ -1212,6 +1232,7 @@ class MockEngine {
   }
 
   public async freezeAccount(phone: string, reason: string) {
+    this.ensureAdmin();
     const user = this.state.users.find((u) => u.phone === phone);
     if (!user) throw { status: 404, error: 'USER_NOT_FOUND', message: 'User not found' };
     user.status = 'FROZEN';
@@ -1220,6 +1241,7 @@ class MockEngine {
   }
 
   public async unfreezeAccount(phone: string, reason: string) {
+    this.ensureAdmin();
     const user = this.state.users.find((u) => u.phone === phone);
     if (!user) throw { status: 404, error: 'USER_NOT_FOUND', message: 'User not found' };
     user.status = 'ACTIVE';
@@ -1228,6 +1250,7 @@ class MockEngine {
   }
 
   public async rebuildBalance(userId: number) {
+    this.ensureAdmin();
     const userAcc = this.state.accounts.find((a) => a.user_id === userId && a.type === 'USER');
     const before = userAcc ? userAcc.balance : 0;
     return {

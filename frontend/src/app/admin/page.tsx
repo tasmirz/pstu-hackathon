@@ -24,8 +24,10 @@ import {
   Server,
   RefreshCw,
 } from 'lucide-react';
+import { useAuth } from '@/lib/auth-context';
 
 export default function AdminConsolePage() {
+  const { requestStepUp, isMockMode } = useAuth();
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
   const [loading, setLoading] = useState(false);
@@ -89,7 +91,12 @@ export default function AdminConsolePage() {
     setAccountActionLoading(true);
     setAccountStatusMessage(null);
     try {
-      await api.freezeAccount(targetPhone, freezeReason);
+      const stepUpToken = await requestStepUp('ADMIN_ACCOUNT_FREEZE');
+      if (!stepUpToken) {
+        setAccountActionLoading(false);
+        return;
+      }
+      await api.freezeAccount(targetPhone, freezeReason, stepUpToken);
       setAccountStatusMessage(`Account ${targetPhone} successfully FROZEN. (Can still receive money; outgoing blocked)`);
     } catch (err: any) {
       setAccountStatusMessage(`Error: ${err.message}`);
@@ -102,7 +109,12 @@ export default function AdminConsolePage() {
     setAccountActionLoading(true);
     setAccountStatusMessage(null);
     try {
-      await api.unfreezeAccount(targetPhone, freezeReason);
+      const stepUpToken = await requestStepUp('ADMIN_ACCOUNT_UNFREEZE');
+      if (!stepUpToken) {
+        setAccountActionLoading(false);
+        return;
+      }
+      await api.unfreezeAccount(targetPhone, freezeReason, stepUpToken);
       setAccountStatusMessage(`Account ${targetPhone} successfully UNFROZEN and restored to ACTIVE status.`);
     } catch (err: any) {
       setAccountStatusMessage(`Error: ${err.message}`);

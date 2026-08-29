@@ -14,7 +14,7 @@
     "db:apply": "node scripts/apply-schema.js",
     "dev": "npm run start:dev -w apps/api",
     "sim": "npm run sim -w sim",
-    "build": "npm run build -ws --if-present"
+    "build": "npm run build --ws --if-present"
   },
   "engines": {
     "node": ">=20"

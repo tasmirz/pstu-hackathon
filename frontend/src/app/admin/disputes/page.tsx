@@ -33,8 +33,8 @@ export default function AdminDisputesPage() {
   const fetchDisputes = async () => {
     setLoading(true);
     try {
-      const list = await api.getDisputes();
-      setDisputes(list);
+      const res = await api.getAdminDisputes();
+      setDisputes(Array.isArray(res) ? res : (res.items ?? []));
     } catch (err) {
       console.error('Failed to load disputes', err);
     } finally {

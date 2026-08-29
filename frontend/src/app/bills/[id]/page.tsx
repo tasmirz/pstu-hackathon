@@ -24,6 +24,8 @@ import {
   Lock,
   Sparkles,
   AlertTriangle,
+  Scale,
+  ArrowRight,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -79,10 +81,11 @@ export default function BillDetailPage() {
     );
   }
 
-  const myShare = user ? bill.shares.find((s) => s.payer.id === user.id) : null;
-  const isCreator = user ? bill.created_by.id === user.id : false;
-  const paidCount = bill.shares.filter((s) => s.state === 'PAID').length;
-  const totalCount = bill.shares.length;
+  const shares = bill.shares || [];
+  const myShare = user ? shares.find((s) => s.payer?.id === user.id) : null;
+  const isCreator = user ? bill.created_by?.id === user.id : false;
+  const paidCount = shares.filter((s) => s.state === 'PAID').length;
+  const totalCount = shares.length;
 
   const handlePayMyShare = async () => {
     if (!bill || !myShare || !user) return;
@@ -189,6 +192,34 @@ export default function BillDetailPage() {
             className="bg-primary h-full rounded-full transition-all duration-500"
             style={{ width: `${(paidCount / totalCount) * 100}%` }}
           />
+        </div>
+      </Card>
+
+      {/* Money Movement Destination Explanation */}
+      <Card className="p-4 bg-surface-container-low border border-outline-variant space-y-2 text-xs">
+        <div className="flex items-center gap-2">
+          <Scale className="w-4 h-4 text-primary" />
+          <span className="font-bold text-on-surface uppercase tracking-wider text-[11px]">
+            Double-Entry Money Settlement Flow
+          </span>
+        </div>
+        <p className="text-on-surface-variant leading-relaxed">
+          {isCreator ? (
+            <>
+              You created this shared bill to collect reimbursements for your upfront payment to <strong>{bill.title}</strong>. Each participant listed below will pay their individual share directly into <strong>Your Account ({user?.name})</strong>.
+            </>
+          ) : (
+            <>
+              When you pay your share of <strong>{myShare ? formatPaisa(myShare.amount_paisa) : ''}</strong>, funds will be transferred directly to the bill creator, <strong>{bill.created_by.name}</strong>.
+            </>
+          )}
+        </p>
+        <div className="flex items-center gap-2 pt-1 font-mono text-[11px] text-primary">
+          <span className="bg-surface-container px-2 py-0.5 rounded">Participant (-৳)</span>
+          <ArrowRight className="w-3.5 h-3.5" />
+          <span className="bg-primary-fixed text-primary font-bold px-2 py-0.5 rounded">
+            Destination Account: {bill.created_by.name} (+৳)
+          </span>
         </div>
       </Card>
 

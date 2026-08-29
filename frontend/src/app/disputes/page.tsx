@@ -9,7 +9,7 @@ import { useAuth } from '@/lib/auth-context';
 import { formatPaisa, formatDate } from '@/lib/money';
 import { api } from '@/lib/api';
 import { Dispute } from '@/lib/types';
-import { ShieldAlert, ArrowUpRight, Clock, CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
+import { ShieldAlert, ArrowUpRight, Clock, CheckCircle2, XCircle, RefreshCw, Plus } from 'lucide-react';
 
 export default function MyDisputesPage() {
   const { user } = useAuth();
@@ -49,14 +49,26 @@ export default function MyDisputesPage() {
           </div>
         </div>
 
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={fetchDisputes}
-          leftIcon={<RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />}
-        >
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Link href="/history" className="flex-1 sm:flex-none">
+            <Button
+              variant="primary"
+              size="sm"
+              leftIcon={<Plus className="w-4 h-4" />}
+              className="w-full sm:w-auto font-bold text-xs"
+            >
+              Raise Dispute
+            </Button>
+          </Link>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={fetchDisputes}
+            leftIcon={<RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />}
+          >
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Disputes List */}

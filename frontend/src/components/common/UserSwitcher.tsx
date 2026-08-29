@@ -3,12 +3,12 @@ import { useAuth } from '@/lib/auth-context';
 import { Users, RotateCcw, Cpu, Database } from 'lucide-react';
 import { formatPaisa } from '@/lib/money';
 
-const PERSONAS = [
-  { id: 42, name: 'Rahim Ahmed', phone: '+8801712345678', role: 'Sender' },
-  { id: 43, name: 'Karim Uddin', phone: '+8801798765432', role: 'Receiver' },
-  { id: 44, name: 'Alam Hossain', phone: '+8801733445566', role: 'Requester' },
-  { id: 45, name: 'Nadia Sultana', phone: '+8801755667788', role: 'New User' },
-  { id: 1, name: 'System Admin', phone: '+8801700000000', role: 'Admin' },
+export const PERSONAS = [
+  { id: 42, name: 'Rahim Ahmed', phone: '+8801712345678', pin: '1234', role: 'Sender' },
+  { id: 43, name: 'Karim Uddin', phone: '+8801798765432', pin: '1234', role: 'Receiver' },
+  { id: 44, name: 'Alam Hossain', phone: '+8801733445566', pin: '1234', role: 'Requester' },
+  { id: 45, name: 'Nadia Sultana', phone: '+8801755667788', pin: '1234', role: 'New User' },
+  { id: 1, name: 'System Admin', phone: '+8801700000000', pin: '9999', role: 'Admin' },
 ];
 
 export function UserSwitcher() {

@@ -4,6 +4,7 @@ import { Button } from './Button';
 import { Input } from './Input';
 import { ShieldAlert, KeyRound } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
+import { api } from '@/lib/api';
 
 export function StepUpModal() {
   const { stepUpOpen, stepUpReason, closeStepUp, user } = useAuth();
@@ -23,9 +24,9 @@ export function StepUpModal() {
     setError('');
 
     try {
-      // Simulate/call POST /auth/step-up
-      const mockToken = `su_${Date.now()}_${code}`;
-      closeStepUp(mockToken);
+      // Call POST /auth/step-up with PIN or TOTP method for a real signed token
+      const token = await api.stepUp(code, method);
+      closeStepUp(token);
       setCode('');
     } catch (err: any) {
       setError(err?.message || 'Verification failed');

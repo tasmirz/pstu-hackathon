@@ -16,12 +16,13 @@ import {
   AlertTriangle,
   UserCheck,
   UserX,
-  ShieldAlert,
   Lock,
   Timer,
   Sparkles,
+  Users,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { PERSONAS } from '@/components/common/UserSwitcher';
 
 interface RecipientLookup {
   id: number;
@@ -155,7 +156,8 @@ function SendMoneyContent() {
     const formId = `send_${recipient.phone}_${amountPaisa}`;
     const idemKey = getIdempotencyKey(formId);
 
-    const stepUpToken = stepUpPin ? `su_pin_${stepUpPin}` : undefined;
+    // Real step-up token from POST /auth/step-up; mock mode returns a marker.
+    const stepUpToken = stepUpPin ? await api.stepUp(stepUpPin) : undefined;
 
     try {
       let res: any;
@@ -237,6 +239,36 @@ function SendMoneyContent() {
       {/* --- STEP 1: RECIPIENT & AMOUNT --- */}
       {step === 1 && (
         <Card className="p-6 space-y-5">
+          {/* Quick Select Destination Accounts */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5 text-primary" />
+              <span>Select Destination Account:</span>
+            </label>
+            <div className="flex flex-wrap gap-1.5">
+              {PERSONAS.filter((p) => p.phone.replace(/\s+/g, '') !== user?.phone.replace(/\s+/g, '')).map((p) => {
+                const isSelected = phone.replace(/\s+/g, '') === p.phone.replace(/\s+/g, '');
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setPhone(p.phone)}
+                    className={`px-2.5 py-1 rounded text-xs transition-all flex items-center gap-1 border ${
+                      isSelected
+                        ? 'bg-primary text-white border-primary shadow-xs font-semibold'
+                        : 'bg-surface-container hover:bg-surface-container-high border-outline-variant text-on-surface'
+                    }`}
+                  >
+                    <span>{p.name.split(' ')[0]}</span>
+                    <span className={`text-[10px] ${isSelected ? 'text-primary-fixed' : 'text-on-surface-variant'} font-mono`}>
+                      ({p.phone.slice(-4)})
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Recipient Phone Input */}
           <div className="space-y-1.5">
             <Input

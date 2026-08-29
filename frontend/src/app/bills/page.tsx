@@ -32,7 +32,7 @@ export default function BillsPage() {
 
   useEffect(() => {
     fetchBills();
-  }, [user, tab]);
+  }, [user?.id, tab]);
 
   return (
     <div className="w-full max-w-3xl mx-auto space-y-6">
@@ -92,9 +92,10 @@ export default function BillsPage() {
           </div>
         ) : (
           bills.map((bill) => {
-            const paidCount = bill.shares.filter((s) => s.state === 'PAID').length;
-            const totalCount = bill.shares.length;
-            const myShare = user ? bill.shares.find((s) => s.payer.id === user.id) : null;
+            const shares = bill.shares || [];
+            const paidCount = shares.filter((s) => s.state === 'PAID').length;
+            const totalCount = shares.length;
+            const myShare = user ? (shares.find((s) => s.payer?.id === user.id) || (bill as any).my_share) : null;
 
             return (
               <Link
@@ -111,13 +112,15 @@ export default function BillsPage() {
                   </div>
 
                   <p className="text-xs text-on-surface-variant">
-                    Created by {bill.created_by.id === user?.id ? 'You' : bill.created_by.name} · {formatDate(bill.created_at)}
+                    Created by {bill.created_by?.id === user?.id ? 'You' : bill.created_by?.name || 'Unknown'} · {formatDate(bill.created_at)}
                   </p>
 
                   <div className="flex items-center gap-3 text-xs text-outline pt-0.5">
-                    <span className="font-semibold text-on-surface">
-                      {paidCount} of {totalCount} shares paid
-                    </span>
+                    {totalCount > 0 && (
+                      <span className="font-semibold text-on-surface">
+                        {paidCount} of {totalCount} shares paid
+                      </span>
+                    )}
                     {myShare && (
                       <span className={`font-semibold ${myShare.state === 'PAID' ? 'text-emerald-800' : 'text-amber-900 font-bold'}`}>
                         Your share: {formatPaisa(myShare.amount_paisa)} ({myShare.state})

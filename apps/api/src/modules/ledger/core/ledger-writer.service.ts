@@ -63,7 +63,7 @@ export class LedgerWriterService implements LedgerWriterPort {
     const availableBalance = Math.max(0, senderBalance - disputeHolds);
 
     if (sender.status === 'FROZEN') throw new AccountFrozen();
-    if (availableBalance < amountPaisa && kind !== 'REVERSAL') {
+    if (availableBalance < amountPaisa) {
       throw new InsufficientFunds(availableBalance, amountPaisa);
     }
 

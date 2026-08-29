@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Card } from '@/components/common/Card';
@@ -9,7 +9,19 @@ import { Input } from '@/components/common/Input';
 import { useAuth } from '@/lib/auth-context';
 import { formatPaisa, parseToPaisa } from '@/lib/money';
 import { api } from '@/lib/api';
-import { ArrowLeft, Plus, Trash2, CheckCircle2, UserX, AlertTriangle, Sparkles } from 'lucide-react';
+import { PERSONAS } from '@/components/common/UserSwitcher';
+import {
+  ArrowLeft,
+  Plus,
+  Trash2,
+  CheckCircle2,
+  UserX,
+  AlertTriangle,
+  Users,
+  Percent,
+  Sliders,
+  Sparkles,
+} from 'lucide-react';
 
 interface ParticipantRow {
   id: string;
@@ -25,36 +37,91 @@ export default function CreateBillPage() {
   const { user } = useAuth();
 
   const [title, setTitle] = useState('Dinner at Kacchi Bhai');
+  const [splitMode, setSplitMode] = useState<'EQUAL' | 'CUSTOM'>('CUSTOM');
+  const [totalAmountInput, setTotalAmountInput] = useState('800');
+
   const [rows, setRows] = useState<ParticipantRow[]>([
-    { id: '1', phone: '+8801798765432', amountStr: '400', resolvedName: 'Karim U.' },
-    { id: '2', phone: '+8801755667788', amountStr: '400', resolvedName: 'Nadia S.' },
+    { id: '1', phone: '+8801798765432', amountStr: '400', resolvedName: 'Karim Uddin' },
+    { id: '2', phone: '+8801755667788', amountStr: '400', resolvedName: 'Nadia Sultana' },
   ]);
 
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Compute total strictly from rows
-  const totalPaisa = rows.reduce((acc, row) => acc + parseToPaisa(row.amountStr), 0);
+  // Debounce timers for phone lookups
+  const lookupTimers = useRef<Record<string, NodeJS.Timeout>>({});
 
-  const handleAddRow = () => {
-    setRows((prev) => [
-      ...prev,
-      { id: Date.now().toString(), phone: '', amountStr: '' },
-    ]);
+  // Recalculate equal shares if in EQUAL mode
+  const recalculateEqualShares = (participants: ParticipantRow[], totalStr: string) => {
+    const totalPaisa = parseToPaisa(totalStr);
+    const n = participants.length;
+    if (n === 0 || totalPaisa <= 0) return participants;
+
+    const base = Math.floor(totalPaisa / n);
+    const rem = totalPaisa % n;
+
+    return participants.map((p, idx) => {
+      const sharePaisa = base + (idx < rem ? 1 : 0);
+      return {
+        ...p,
+        amountStr: (sharePaisa / 100).toFixed(2).replace(/\.00$/, ''),
+      };
+    });
   };
 
-  const handleRemoveRow = (id: string) => {
-    if (rows.length <= 2) {
-      alert('A shared bill requires at least 2 shares.');
+  const triggerLookup = useCallback((rowId: string, phoneVal: string) => {
+    const cleaned = phoneVal.replace(/\s+/g, '');
+    if (cleaned.length < 8) return;
+
+    if (user && cleaned === user.phone.replace(/\s+/g, '')) {
+      setRows((prev) =>
+        prev.map((r) =>
+          r.id === rowId
+            ? { ...r, resolvedName: undefined, lookupLoading: false, lookupError: 'Cannot split with yourself' }
+            : r
+        )
+      );
       return;
     }
-    setRows((prev) => prev.filter((r) => r.id !== id));
-  };
+
+    setRows((prev) =>
+      prev.map((r) => (r.id === rowId ? { ...r, lookupLoading: true, lookupError: undefined } : r))
+    );
+
+    api
+      .lookupUser(cleaned)
+      .then((res) => {
+        setRows((prev) =>
+          prev.map((r) =>
+            r.id === rowId
+              ? { ...r, resolvedName: res.name, lookupLoading: false, lookupError: undefined }
+              : r
+          )
+        );
+      })
+      .catch(() => {
+        setRows((prev) =>
+          prev.map((r) =>
+            r.id === rowId
+              ? { ...r, resolvedName: undefined, lookupLoading: false, lookupError: 'User not found' }
+              : r
+          )
+        );
+      });
+  }, [user]);
 
   const handlePhoneChange = (id: string, value: string) => {
     setRows((prev) =>
       prev.map((r) => (r.id === id ? { ...r, phone: value, resolvedName: undefined, lookupError: undefined } : r))
     );
+
+    if (lookupTimers.current[id]) {
+      clearTimeout(lookupTimers.current[id]);
+    }
+
+    lookupTimers.current[id] = setTimeout(() => {
+      triggerLookup(id, value);
+    }, 400);
   };
 
   const handleAmountChange = (id: string, value: string) => {
@@ -63,52 +130,97 @@ export default function CreateBillPage() {
     );
   };
 
-  // Debounced lookup for rows
-  useEffect(() => {
-    rows.forEach((row) => {
-      if (row.phone && row.phone.length >= 8 && !row.resolvedName && !row.lookupError && !row.lookupLoading) {
-        // Trigger lookup
-        setRows((prev) =>
-          prev.map((r) => (r.id === row.id ? { ...r, lookupLoading: true } : r))
-        );
+  const handleTotalAmountChange = (val: string) => {
+    setTotalAmountInput(val);
+    if (splitMode === 'EQUAL') {
+      setRows((prev) => recalculateEqualShares(prev, val));
+    }
+  };
 
-        api
-          .lookupUser(row.phone)
-          .then((res) => {
-            setRows((prev) =>
-              prev.map((r) =>
-                r.id === row.id
-                  ? { ...r, resolvedName: res.name, lookupLoading: false, lookupError: undefined }
-                  : r
-              )
-            );
-          })
-          .catch(() => {
-            setRows((prev) =>
-              prev.map((r) =>
-                r.id === row.id
-                  ? { ...r, resolvedName: undefined, lookupLoading: false, lookupError: 'User not found' }
-                  : r
-              )
-            );
-          });
-      }
-    });
-  }, [rows]);
+  const handleAddRow = () => {
+    const newId = Date.now().toString();
+    const newRow: ParticipantRow = { id: newId, phone: '', amountStr: '' };
+    const updated = [...rows, newRow];
+    if (splitMode === 'EQUAL') {
+      setRows(recalculateEqualShares(updated, totalAmountInput));
+    } else {
+      setRows(updated);
+    }
+  };
+
+  const handleQuickAddContact = (persona: typeof PERSONAS[0]) => {
+    // Check if already in rows
+    const existing = rows.find((r) => r.phone.replace(/\s+/g, '') === persona.phone.replace(/\s+/g, ''));
+    if (existing) return;
+
+    // Check if there is an empty row we can fill
+    const emptyRow = rows.find((r) => !r.phone.trim());
+    let updated: ParticipantRow[];
+
+    if (emptyRow) {
+      updated = rows.map((r) =>
+        r.id === emptyRow.id
+          ? { ...r, phone: persona.phone, resolvedName: persona.name, lookupError: undefined }
+          : r
+      );
+    } else {
+      const newId = Date.now().toString();
+      updated = [
+        ...rows,
+        { id: newId, phone: persona.phone, amountStr: '', resolvedName: persona.name },
+      ];
+    }
+
+    if (splitMode === 'EQUAL') {
+      setRows(recalculateEqualShares(updated, totalAmountInput));
+    } else {
+      setRows(updated);
+    }
+  };
+
+  const handleRemoveRow = (id: string) => {
+    if (rows.length <= 2) {
+      alert('A shared bill requires at least 2 shares.');
+      return;
+    }
+    const updated = rows.filter((r) => r.id !== id);
+    if (splitMode === 'EQUAL') {
+      setRows(recalculateEqualShares(updated, totalAmountInput));
+    } else {
+      setRows(updated);
+    }
+  };
+
+  const handleToggleSplitMode = (mode: 'EQUAL' | 'CUSTOM') => {
+    setSplitMode(mode);
+    if (mode === 'EQUAL') {
+      const sumPaisa = rows.reduce((acc, row) => acc + parseToPaisa(row.amountStr), 0);
+      const totalStr = sumPaisa > 0 ? (sumPaisa / 100).toFixed(2).replace(/\.00$/, '') : totalAmountInput;
+      setTotalAmountInput(totalStr);
+      setRows((prev) => recalculateEqualShares(prev, totalStr));
+    }
+  };
+
+  // Compute total strictly from rows
+  const totalPaisa = rows.reduce((acc, row) => acc + parseToPaisa(row.amountStr), 0);
+
+  // Available contacts to quick select
+  const availableContacts = PERSONAS.filter(
+    (p) => p.phone.replace(/\s+/g, '') !== user?.phone.replace(/\s+/g, '')
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
     setErrorMessage(null);
 
-    // Client-side validations
     if (!title.trim()) {
       setErrorMessage('Please enter a bill title.');
       return;
     }
 
     if (rows.length < 2) {
-      setErrorMessage('A shared bill requires at least 2 people.');
+      setErrorMessage('A shared bill requires at least 2 participants.');
       return;
     }
 
@@ -166,17 +278,114 @@ export default function CreateBillPage() {
             required
           />
 
+          {/* Quick Select Destination Accounts / Contacts */}
+          <div className="space-y-2">
+            <label className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5 text-primary" />
+              <span>Select Destination Accounts / Quick Contacts:</span>
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {availableContacts.map((contact) => {
+                const isSelected = rows.some(
+                  (r) => r.phone.replace(/\s+/g, '') === contact.phone.replace(/\s+/g, '')
+                );
+                return (
+                  <button
+                    key={contact.id}
+                    type="button"
+                    onClick={() => handleQuickAddContact(contact)}
+                    disabled={isSelected}
+                    className={`px-3 py-1.5 rounded text-xs font-medium transition-all flex items-center gap-1.5 border ${
+                      isSelected
+                        ? 'bg-primary-container text-white border-primary cursor-default opacity-80'
+                        : 'bg-surface-container hover:bg-surface-container-high border-outline-variant text-on-surface hover:border-primary'
+                    }`}
+                  >
+                    <span className="font-bold">{isSelected ? '✓' : '+'}</span>
+                    <span>{contact.name}</span>
+                    <span className="text-[10px] text-on-surface-variant font-mono">({contact.phone.slice(-4)})</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Split Mode Selector */}
+          <div className="space-y-2">
+            <label className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+              Split Mode
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => handleToggleSplitMode('CUSTOM')}
+                className={`p-3 rounded-lg border text-left transition-all ${
+                  splitMode === 'CUSTOM'
+                    ? 'border-primary bg-primary-50/20 shadow-xs'
+                    : 'border-outline-variant bg-surface-container-low hover:bg-surface-container'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold text-on-surface">Custom Shares</span>
+                  <Sliders className="w-4 h-4 text-primary" />
+                </div>
+                <p className="text-[11px] text-on-surface-variant leading-tight">
+                  Enter custom payment amounts for each participant
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleToggleSplitMode('EQUAL')}
+                className={`p-3 rounded-lg border text-left transition-all ${
+                  splitMode === 'EQUAL'
+                    ? 'border-primary bg-primary-50/20 shadow-xs'
+                    : 'border-outline-variant bg-surface-container-low hover:bg-surface-container'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold text-on-surface">Equal Split</span>
+                  <Percent className="w-4 h-4 text-primary" />
+                </div>
+                <p className="text-[11px] text-on-surface-variant leading-tight">
+                  Specify total bill amount; divided evenly among participants
+                </p>
+              </button>
+            </div>
+          </div>
+
+          {/* If Equal Mode, Show Total Input */}
+          {splitMode === 'EQUAL' && (
+            <div className="p-4 rounded-lg bg-surface-container-low border border-primary/30 space-y-2">
+              <label className="text-xs font-semibold text-on-surface block">
+                Total Bill Amount to Split Evenly
+              </label>
+              <Input
+                type="text"
+                placeholder="৳ 0.00"
+                value={totalAmountInput}
+                onChange={(e) => handleTotalAmountChange(e.target.value)}
+                prefixElement={<span className="font-bold text-primary text-sm">৳</span>}
+                className="text-lg font-bold font-mono"
+                autoFocus
+              />
+              <p className="text-[11px] text-on-surface-variant">
+                Auto-divided equally among the {rows.length} participants below.
+              </p>
+            </div>
+          )}
+
           {/* Participant Rows */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <label className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
-                Split with ({rows.length} People)
+                Participant Accounts ({rows.length} People)
               </label>
               <span className="text-[11px] text-outline font-mono">Min 2 participants</span>
             </div>
 
             <div className="space-y-3">
-              {rows.map((row, idx) => (
+              {rows.map((row) => (
                 <div
                   key={row.id}
                   className="p-3.5 rounded bg-surface-container-low border border-outline-variant space-y-2"
@@ -212,7 +421,9 @@ export default function CreateBillPage() {
                         placeholder="৳ 0.00"
                         value={row.amountStr}
                         onChange={(e) => handleAmountChange(row.id, e.target.value)}
+                        readOnly={splitMode === 'EQUAL'}
                         prefixElement={<span className="font-bold text-primary text-xs">৳</span>}
+                        className={splitMode === 'EQUAL' ? 'bg-surface-container' : ''}
                       />
                     </div>
 
@@ -237,7 +448,7 @@ export default function CreateBillPage() {
               leftIcon={<Plus className="w-4 h-4" />}
               className="w-full text-xs font-bold py-2"
             >
-              Add Another Person
+              Add Participant Account
             </Button>
           </div>
 

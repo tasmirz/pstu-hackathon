@@ -21,6 +21,7 @@ import {
   ShieldCheck,
   AlertCircle,
   Sliders,
+  AlertOctagon,
 } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -151,6 +152,16 @@ export default function DashboardPage() {
               className="w-full md:w-44 py-3.5 font-bold"
             >
               Request
+            </Button>
+          </Link>
+          <Link href="/disputes" className="flex-1 md:flex-none">
+            <Button
+              variant="outline"
+              size="lg"
+              leftIcon={<AlertOctagon className="w-4 h-4" />}
+              className="w-full md:w-44 py-3.5 font-bold"
+            >
+              Raise Dispute
             </Button>
           </Link>
         </div>

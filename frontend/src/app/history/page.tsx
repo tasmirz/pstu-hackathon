@@ -17,6 +17,7 @@ import {
   ChevronRight,
   RefreshCw,
   Search,
+  AlertOctagon,
 } from 'lucide-react';
 
 export default function HistoryPage() {
@@ -72,14 +73,26 @@ export default function HistoryPage() {
           </p>
         </div>
 
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => fetchTransactions()}
-          leftIcon={<RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />}
-        >
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Link href="/disputes" className="flex-1 sm:flex-none">
+            <Button
+              variant="outline"
+              size="sm"
+              leftIcon={<AlertOctagon className="w-3.5 h-3.5" />}
+              className="w-full sm:w-auto font-bold text-xs"
+            >
+              Raise Dispute
+            </Button>
+          </Link>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => fetchTransactions()}
+            leftIcon={<RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />}
+          >
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Filter and Search Bar */}

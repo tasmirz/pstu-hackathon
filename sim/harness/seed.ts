@@ -92,26 +92,30 @@ export async function resetForCleanRun(adminPool: Pool): Promise<void> {
   const client = await adminPool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`DELETE FROM ledger.recovery_cases`);
-    await client.query(`DELETE FROM ledger.bill_payments`);
-    await client.query(`DELETE FROM ledger.bill_shares`);
-    await client.query(`DELETE FROM ledger.bills`);
-    await client.query(`DELETE FROM ledger.group_batch_items`);
-    await client.query(`DELETE FROM ledger.group_batches`);
-    await client.query(`DELETE FROM ledger.disputes`);
-    await client.query(`DELETE FROM ledger.money_requests`);
-    await client.query(`DELETE FROM notify.notifications`);
-    await client.query(`DELETE FROM ledger.idempotency_keys`);
-    await client.query(`DELETE FROM ledger.outbox`);
-    await client.query(`DELETE FROM ledger.chain_checkpoints`);
-    await client.query(`DELETE FROM ledger.audit_log`);
-    await client.query(`DELETE FROM ledger.entries`);
-    await client.query(`DELETE FROM ledger.transactions`);
+    await client.query(`
+      TRUNCATE TABLE
+        ledger.recovery_cases,
+        ledger.bill_payments,
+        ledger.bill_shares,
+        ledger.bills,
+        ledger.group_batch_items,
+        ledger.group_batches,
+        ledger.disputes,
+        ledger.money_requests,
+        notify.notifications,
+        ledger.idempotency_keys,
+        ledger.outbox,
+        ledger.chain_checkpoints,
+        ledger.audit_log,
+        ledger.entries,
+        ledger.transactions,
+        auth.refresh_tokens,
+        auth.users,
+        ledger.limit_overrides
+      CASCADE
+    `);
     await client.query(`DELETE FROM ledger.accounts WHERE type <> 'SYSTEM_MINT'`);
     await client.query(`UPDATE ledger.accounts SET balance = 0 WHERE type = 'SYSTEM_MINT'`);
-    await client.query(`DELETE FROM auth.refresh_tokens`);
-    await client.query(`DELETE FROM auth.users`);
-    await client.query(`DELETE FROM ledger.limit_overrides`);
     await client.query(`SELECT setval('auth.users_id_seq', 1, false)`);
     await client.query('COMMIT');
   } catch (err) {

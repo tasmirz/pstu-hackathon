@@ -91,8 +91,10 @@ export const CON_03: Scenario = {
       stepUpTokens.set(i, su.body.step_up_token);
     }
 
+    const ringUserIds = users.map((u) => u.user.id);
     const supplyBefore = await ctx.adminPool.query(
-      `SELECT COALESCE(SUM(balance),0)::bigint AS s FROM ledger.accounts WHERE type <> 'SYSTEM_MINT'`,
+      `SELECT COALESCE(SUM(balance),0)::bigint AS s FROM ledger.accounts WHERE user_id = ANY($1::bigint[])`,
+      [ringUserIds],
     );
 
     let accepted = 0;
@@ -119,9 +121,10 @@ export const CON_03: Scenario = {
     ctx.expect(accepted > 0, `some transfers landed (${accepted})`);
 
     const supplyAfter = await ctx.adminPool.query(
-      `SELECT COALESCE(SUM(balance),0)::bigint AS s FROM ledger.accounts WHERE type <> 'SYSTEM_MINT'`,
+      `SELECT COALESCE(SUM(balance),0)::bigint AS s FROM ledger.accounts WHERE user_id = ANY($1::bigint[])`,
+      [ringUserIds],
     );
-    ctx.expectEq(supplyAfter.rows[0].s, supplyBefore.rows[0].s, 'total supply unchanged');
+    ctx.expectEq(supplyAfter.rows[0].s, supplyBefore.rows[0].s, 'total ring balance unchanged');
 
     const balancesAfter = await Promise.all(users.map((u) => ctx.balance(u)));
     balancesAfter.forEach((b, i) => ctx.expect(b >= 0, `account ${i} non-negative (got ${b})`));

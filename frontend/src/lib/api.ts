@@ -19,7 +19,10 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 
 class ApiClient {
   private accessToken: string | null = null;
-  private isMockMode: boolean = true;
+  // Default to the REAL backend — the simulator board (88/88) is the demo.
+  // The mock engine stays available via the UserSwitcher toggle for a
+  // zero-dependency fallback, but the live API is the primary path now.
+  private isMockMode: boolean = false;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -165,6 +168,43 @@ class ApiClient {
     return this.request<User>('/auth/me');
   }
 
+  /** Real step-up: POST /auth/step-up {method:'PIN'|'TOTP', pin/code} -> {step_up_token}. */
+  public async stepUp(codeOrPin: string, method: 'PIN' | 'TOTP' = 'PIN'): Promise<string> {
+    if (this.isMockMode) {
+      return `su_mock_${codeOrPin}`;
+    }
+    const body = method === 'TOTP'
+      ? { method: 'TOTP', code: codeOrPin }
+      : { method: 'PIN', pin: codeOrPin };
+    const res = await this.request<{ step_up_token: string; expires_in: number }>('/auth/step-up', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    return res.step_up_token;
+  }
+
+  public async setupTotp(): Promise<{ secret: string; otpauth_url: string }> {
+    if (this.isMockMode) {
+      return {
+        secret: 'JBSWY3DPEHPK3PXP',
+        otpauth_url: 'otpauth://totp/KineticLedger:user?secret=JBSWY3DPEHPK3PXP&issuer=KineticLedger',
+      };
+    }
+    return this.request<{ secret: string; otpauth_url: string }>('/auth/totp/setup', {
+      method: 'POST',
+    });
+  }
+
+  public async verifyTotp(code: string): Promise<{ success: boolean; message: string }> {
+    if (this.isMockMode) {
+      return { success: true, message: 'TOTP verified' };
+    }
+    return this.request<{ success: boolean; message: string }>('/auth/totp/verify', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+  }
+
   public async lookupUser(phone: string) {
     if (this.isMockMode) {
       return mockEngine.lookupUser(phone);
@@ -251,7 +291,8 @@ class ApiClient {
     if (this.isMockMode) {
       return mockEngine.getDisputes(userId);
     }
-    return this.request<Dispute[]>('/disputes');
+    const res = await this.request<{ items?: Dispute[] }>('/disputes');
+    return Array.isArray(res) ? res : (res.items ?? []);
   }
 
   // --- SHARED BILLS ---
@@ -270,7 +311,8 @@ class ApiClient {
     if (this.isMockMode) {
       return mockEngine.getBills(userId, role);
     }
-    return this.request<Bill[]>(`/bills/mine?role=${role}`);
+    const res = await this.request<{ items?: Bill[] }>(`/bills/mine?role=${role}`);
+    return Array.isArray(res) ? res : (res.items ?? []);
   }
 
   public async getBill(id: number): Promise<Bill> {
@@ -372,14 +414,18 @@ class ApiClient {
     if (this.isMockMode) {
       return mockEngine.getMoneyRequests(userId, type);
     }
-    return this.request<MoneyRequest[]>(`/money-requests/${type}`);
+    // Backend returns {items, next_cursor, has_more}; the UI consumes a plain
+    // array (same shape the mock engine returns), so normalize here.
+    const res = await this.request<{ items?: MoneyRequest[] }>(`/money-requests/${type}`);
+    return Array.isArray(res) ? res : (res.items ?? []);
   }
 
   public async getNotifications(): Promise<NotificationItem[]> {
     if (this.isMockMode) {
       return mockEngine.getNotifications();
     }
-    return this.request<NotificationItem[]>('/notifications');
+    const res = await this.request<{ items?: NotificationItem[] }>('/notifications');
+    return Array.isArray(res) ? res : (res.items ?? []);
   }
 
   public async getIntegrityReport(): Promise<IntegrityCheckReport> {
@@ -426,22 +472,54 @@ class ApiClient {
     });
   }
 
-  public async freezeAccount(phone: string, reason: string) {
+  public async getAdminDisputes(limit = 20, cursor?: number): Promise<{ items: Dispute[]; next_cursor: number | null; has_more: boolean }> {
     if (this.isMockMode) {
-      return mockEngine.freezeAccount(phone, reason);
+      const items = await mockEngine.getDisputes();
+      return { items, next_cursor: null, has_more: false };
     }
-    return this.request<any>(`/admin/accounts/${phone}/freeze`, {
+    const params = new URLSearchParams({ limit: limit.toString() });
+    if (cursor) params.set('cursor', cursor.toString());
+    return this.request<{ items: Dispute[]; next_cursor: number | null; has_more: boolean }>(
+      `/admin/disputes?${params.toString()}`
+    );
+  }
+
+  public async freezeAccount(phoneOrId: string | number, reason: string, stepUpToken?: string) {
+    if (this.isMockMode) {
+      return mockEngine.freezeAccount(phoneOrId.toString(), reason);
+    }
+    let targetId: number;
+    if (typeof phoneOrId === 'number') {
+      targetId = phoneOrId;
+    } else {
+      const lookup = await this.lookupUser(phoneOrId);
+      targetId = lookup.id;
+    }
+    const headers: Record<string, string> = {};
+    if (stepUpToken) headers['X-Step-Up-Token'] = stepUpToken;
+    return this.request<any>(`/admin/accounts/${targetId}/freeze`, {
       method: 'POST',
+      headers,
       body: JSON.stringify({ reason }),
     });
   }
 
-  public async unfreezeAccount(phone: string, reason: string) {
+  public async unfreezeAccount(phoneOrId: string | number, reason: string, stepUpToken?: string) {
     if (this.isMockMode) {
-      return mockEngine.unfreezeAccount(phone, reason);
+      return mockEngine.unfreezeAccount(phoneOrId.toString(), reason);
     }
-    return this.request<any>(`/admin/accounts/${phone}/unfreeze`, {
+    let targetId: number;
+    if (typeof phoneOrId === 'number') {
+      targetId = phoneOrId;
+    } else {
+      const lookup = await this.lookupUser(phoneOrId);
+      targetId = lookup.id;
+    }
+    const headers: Record<string, string> = {};
+    if (stepUpToken) headers['X-Step-Up-Token'] = stepUpToken;
+    return this.request<any>(`/admin/accounts/${targetId}/unfreeze`, {
       method: 'POST',
+      headers,
       body: JSON.stringify({ reason }),
     });
   }

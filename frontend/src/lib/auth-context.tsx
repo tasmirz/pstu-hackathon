@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { User, BalanceResponse, NotificationItem } from './types';
 import { api } from './api';
 import { mockEngine } from './mock-engine';
+import { PERSONAS } from '@/components/common/UserSwitcher';
 
 interface AuthContextType {
   user: User | null;
@@ -46,7 +47,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [heldBalance, setHeldBalance] = useState<number>(1000000);
   const [availableBalance, setAvailableBalance] = useState<number>(8750000);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isMockMode, setIsMockMode] = useState<boolean>(true);
+  const [isMockMode, setIsMockMode] = useState<boolean>(false);
   const [balanceUpdated, setBalanceUpdated] = useState<boolean>(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
@@ -78,9 +79,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Subscribe to live events from Mock Engine & Centrifugo
   useEffect(() => {
-    setIsMockMode(api.getMockMode());
-    refreshBalance();
-    loadNotifications();
+    const mock = api.getMockMode();
+    setIsMockMode(mock);
+
+    // Real mode: ensure we have a real session for a demo persona. The login
+    // screen / UserSwitcher set a token on login; when none is present yet,
+    // auto-sign-in as Rahim (the primary demo persona) so the dashboard is
+    // live against the backend instead of a hard-coded mock balance.
+    if (!mock) {
+      const restore = async () => {
+        try {
+          const me = await api.getMe();
+          setUser(me);
+          await refreshBalance();
+          await loadNotifications();
+        } catch {
+          try {
+            await api.login(PERSONAS[0].phone, PERSONAS[0].pin);
+            setUser((await api.getMe()));
+            await refreshBalance();
+            await loadNotifications();
+          } catch {
+            // no backend reachable — stay on the login screen
+          }
+        }
+      };
+      void restore();
+    } else {
+      refreshBalance();
+      loadNotifications();
+    }
 
     const unsubscribe = mockEngine.subscribe((event, data) => {
       // Flash balance animation
@@ -131,6 +159,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const switchUser = async (userId: number) => {
     setIsLoading(true);
     try {
+      if (!isMockMode) {
+        // Real mode: log in as the persona via the real API (phone + pin),
+        // so the token/balance/notifications all come from the live backend.
+        const persona = PERSONAS.find((p) => p.id === userId);
+        if (persona) {
+          const res = await api.login(persona.phone, persona.pin);
+          setUser(res.user);
+          const bal = await api.getBalance(userId);
+          setBalance(bal.balance_paisa);
+          setHeldBalance(bal.held_paisa);
+          setAvailableBalance(bal.available_paisa);
+          await loadNotifications();
+          return;
+        }
+      }
       const u = await api.getMe(userId);
       setUser(u);
       const bal = await api.getBalance(userId);

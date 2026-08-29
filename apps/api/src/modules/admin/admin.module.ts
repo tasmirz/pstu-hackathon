@@ -6,10 +6,11 @@ import { AdminDisputesController } from './admin-disputes.controller';
 import { AdminIntegrityController } from './admin-integrity.controller';
 import { AdminIntegrityService } from './admin-integrity.service';
 import { AdminReputationController } from './admin-reputation.controller';
+import { AdminSimulatorController } from './admin-simulator.controller';
 
 @Module({
   imports: [DisputesModule],
-  controllers: [AdminIntegrityController, AdminDisputesController, AdminReputationController],
+  controllers: [AdminIntegrityController, AdminDisputesController, AdminReputationController, AdminSimulatorController],
   providers: [AdminIntegrityService, JwtAuthGuard, AdminGuard],
 })
 export class AdminModule {}

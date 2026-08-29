@@ -29,11 +29,19 @@ export interface ResolveDisputeParams {
 
 @Injectable()
 export class DisputesService {
+  private readonly ledgerWriter: LedgerWriterPort;
+  private readonly accounts: AccountsRepository;
+
   constructor(
     @Inject(LEDGER_POOL) private readonly pool: Pool,
-    @Inject(LEDGER_WRITER_PORT) private readonly ledgerWriter: LedgerWriterPort,
-    private readonly accounts: AccountsRepository,
-  ) {}
+    @Inject(LEDGER_WRITER_PORT) ledgerWriter: LedgerWriterPort,
+    accounts?: AccountsRepository,
+  ) {
+    this.ledgerWriter = (ledgerWriter as any)?.moveMoney
+      ? ledgerWriter
+      : (ledgerWriter as any)?.ledgerWriter ?? ledgerWriter;
+    this.accounts = accounts ?? new AccountsRepository();
+  }
 
   async raise(userId: number, txnId: number, reason: string) {
     return withTransaction(this.pool, async (t) => {
