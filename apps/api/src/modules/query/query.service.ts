@@ -4,6 +4,7 @@ import { Pool } from 'pg';
 import { config } from '../../config';
 import { READ_POOL } from '../../db/db.module';
 import { TransactionListQueryDto } from './dto';
+import { reputationTier } from './reputation';
 
 @Injectable()
 export class QueryService {
@@ -134,8 +135,16 @@ export class QueryService {
   }
 
   async lookupUser(requesterId: number, phone: string) {
-    const found = await this.pool.query<{ id: number; phone: string; name: string }>(
-      `SELECT id, phone, name FROM auth.users_public WHERE phone = $1`,
+    const found = await this.pool.query<{
+      id: number;
+      phone: string;
+      name: string;
+      reputation_score: number;
+    }>(
+      `SELECT u.id, u.phone, u.name, r.reputation_score
+         FROM auth.users_public u
+         JOIN ledger.v_user_reputation r ON r.user_id = u.id
+        WHERE u.phone = $1`,
       [phone],
     );
     const user = found.rows[0];
@@ -153,6 +162,10 @@ export class QueryService {
       name: this.firstNameAndLastInitial(user.name),
       phone: user.phone,
       is_first_time: prior.rowCount === 0,
+      reputation: {
+        score: user.reputation_score,
+        tier: reputationTier(user.reputation_score),
+      },
     };
   }
 
