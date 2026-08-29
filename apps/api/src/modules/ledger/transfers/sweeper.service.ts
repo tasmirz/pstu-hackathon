@@ -24,10 +24,6 @@ export class SweeperService implements OnModuleInit, OnModuleDestroy {
         this.logger.error(`Error in sweeper background loop: ${err.message}`, err.stack);
       });
     }, config.sweeperIntervalMs);
-
-    if (this.timer.unref) {
-      this.timer.unref();
-    }
   }
 
   onModuleDestroy() {

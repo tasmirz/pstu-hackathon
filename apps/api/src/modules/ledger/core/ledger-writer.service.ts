@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PoolClient } from 'pg';
-import { AccountFrozen, DailyLimitExceeded, InsufficientFunds, newTxnRef } from '@pstu/shared';
+import { AccountFrozen, DailyLimitExceeded, InsufficientFunds, newTxnRef, taka } from '@pstu/shared';
 import { config } from '../../../config';
 import { AccountsRepository } from './accounts.repository';
 import { UsersRepository } from './users.repository';
@@ -129,6 +129,70 @@ export class LedgerWriterService implements LedgerWriterPort {
       topic,
       JSON.stringify({ ...response, sender_id: senderId }),
     ]);
+
+    // Direct notifications in the SAME transaction (Round 6)
+    if (kind === 'TRANSFER') {
+      await client.query(
+        `INSERT INTO notify.notifications (user_id, kind, title, body, txn_id)
+         VALUES ($1, 'TXN_SENT', 'Money Sent', $2, $3),
+                ($4, 'TXN_RECEIVED', 'Money Received', $5, $3)`,
+        [
+          senderId,
+          `Sent ${taka(amountPaisa)} to ${receiver.name}`,
+          txn.id,
+          receiverId,
+          `Received ${taka(amountPaisa)} from ${sender.name}`,
+        ],
+      );
+    } else if (kind === 'HOLD_SETTLE') {
+      await client.query(
+        `INSERT INTO notify.notifications (user_id, kind, title, body, txn_id)
+         VALUES ($1, 'TXN_RECEIVED', 'Money Received', $2, $3)`,
+        [
+          receiverId,
+          `Received ${taka(amountPaisa)} from ${sender.name}`,
+          txn.id,
+        ],
+      );
+    } else if (kind === 'REQUEST_SETTLE') {
+      // sender is payer, receiver is requester
+      await client.query(
+        `INSERT INTO notify.notifications (user_id, kind, title, body, txn_id)
+         VALUES ($1, 'REQUEST_PAID', 'Request Paid', $2, $3)`,
+        [
+          receiverId,
+          `${sender.name} paid your request for ${taka(amountPaisa)}`,
+          txn.id,
+        ],
+      );
+    } else if (kind === 'BILL_SHARE_SETTLE') {
+      // sender is payer, receiver is bill creator
+      const desc = note
+        ? `${sender.name} paid their ${taka(amountPaisa)} share: ${note}`
+        : `${sender.name} paid their ${taka(amountPaisa)} share of bill`;
+      await client.query(
+        `INSERT INTO notify.notifications (user_id, kind, title, body, txn_id)
+         VALUES ($1, 'REQUEST_PAID', 'Bill Share Paid', $2, $3)`,
+        [
+          receiverId,
+          desc,
+          txn.id,
+        ],
+      );
+    } else if (kind === 'REVERSAL') {
+      const desc = note ? `Reversed: ${note}` : `Transaction reversed for ${taka(amountPaisa)}`;
+      await client.query(
+        `INSERT INTO notify.notifications (user_id, kind, title, body, txn_id)
+         VALUES ($1, 'REVERSAL', 'Transaction Reversed', $2, $3),
+                ($4, 'REVERSAL', 'Transaction Reversed', $2, $3)`,
+        [
+          senderId,
+          desc,
+          txn.id,
+          receiverId,
+        ],
+      );
+    }
 
     return response;
   }

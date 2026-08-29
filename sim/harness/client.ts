@@ -244,6 +244,28 @@ export class ApiClient {
     return this.request('GET', `/users/lookup?phone=${encodeURIComponent(phone)}`, { token });
   }
 
+  // ---- notifications ----
+
+  notifications(
+    token: string,
+    q: { limit?: number; cursor?: number; unread?: boolean } = {},
+  ): Promise<ApiResult<any>> {
+    const params = new URLSearchParams();
+    if (q.limit !== undefined) params.set('limit', String(q.limit));
+    if (q.cursor !== undefined) params.set('cursor', String(q.cursor));
+    if (q.unread !== undefined) params.set('unread', String(q.unread));
+    const qs = params.toString();
+    return this.request('GET', `/notifications${qs ? '?' + qs : ''}`, { token });
+  }
+
+  markNotificationRead(token: string, id: number): Promise<ApiResult<any>> {
+    return this.request('POST', `/notifications/${id}/read`, { token });
+  }
+
+  markAllNotificationsRead(token: string): Promise<ApiResult<any>> {
+    return this.request('POST', '/notifications/read-all', { token });
+  }
+
   // ---- admin ----
 
   integrity(token: string): Promise<ApiResult<any>> {

@@ -4,6 +4,35 @@ Running log of backend implementation work done by Antigravity. Newest entry on 
 
 ---
 
+## 2026-08-29 — Round 6: Notification Writes (`notify.notifications` & `NotificationsModule`) (Completed)
+
+Implemented TASKS_ANTIGRAVITY.md Round 6:
+1. **Direct Notification Writes in `moveMoney` (`apps/api/src/modules/ledger/core/ledger-writer.service.ts`)**:
+   - Integrated direct inserts into `notify.notifications` in the SAME transaction as the ledger entries and transactional outbox.
+   - Mapping rules:
+     - `TRANSFER`: Sender receives `TXN_SENT` ("Sent ৳X to {name}"), Receiver receives `TXN_RECEIVED` ("Received ৳X from {name}").
+     - `HOLD_SETTLE`: Receiver receives `TXN_RECEIVED` ("Received ৳X from {name}").
+     - `REQUEST_SETTLE`: Requester receives `REQUEST_PAID` ("{payer name} paid your request for ৳X").
+     - `BILL_SHARE_SETTLE`: Bill creator receives `REQUEST_PAID` ("{payer name} paid their ৳X share: {note}").
+     - `REVERSAL`: Both parties receive `REVERSAL` ("Transaction Reversed: {note}").
+     - `SIGNUP_BONUS` / `HOLD_CANCEL`: Skipped as specified.
+   - Note: `REQUEST_NEW` (request created) and `LIMIT_WARNING` (daily limit threshold) occur outside `moveMoney` and are clearly flagged as follow-up items.
+2. **Notifications API Module (`apps/api/src/modules/notifications/`)**:
+   - `GET /notifications?unread=&limit=&cursor=`: Keyset-paginated notifications for authenticated user, with optional boolean `unread` filter.
+   - `POST /notifications/:id/read`: Marks specified notification as read (`read_at = now()`).
+   - `POST /notifications/read-all`: Marks all unread notifications for caller as read.
+   - Registered `NotificationsModule` in `app.module.ts`.
+3. **Harness & Simulator Coverage (`sim/scenarios/notifications.ts`)**:
+   - Added `notifications`, `markNotificationRead`, and `markAllNotificationsRead` to `sim/harness/client.ts`.
+   - `NOTIF-01`: Transfer generates `TXN_SENT` and `TXN_RECEIVED` with formatted amount and counterparties.
+   - `NOTIF-02`: Money request payment generates `REQUEST_PAID` notification for requester.
+   - `NOTIF-03`: Shared bill payment generates `REQUEST_PAID` notification for creator.
+   - `NOTIF-04`: Marking notification read updates `read_at` and removes from `?unread=true`.
+   - `NOTIF-05`: Reversal generates `REVERSAL` notification for both parties.
+   - **Verification**: `5/5 PASS` (100% green, conservation held across all scenarios).
+
+---
+
 ## 2026-08-29 — Round 5: Money Requests Inbox/Outbox (`GET /money-requests/incoming` & `GET /money-requests/outgoing`) (Completed)
 
 Implemented TASKS_ANTIGRAVITY.md Round 5 / API.md "Money Requests":
