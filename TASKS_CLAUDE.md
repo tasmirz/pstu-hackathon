@@ -26,9 +26,10 @@ Reputation sections).
 | Antigravity | Round 4: `sim/scenarios/dispute.ts`/`bills.ts`/`requests.ts` (own modules over real HTTP) | ✅ **done, verified** — 11/11, 5/5, 5/5 |
 | DeepSeek | Round 2: reputation UI + frozen banner + REVERSAL row | ✅ **done** — see `BUILD_LOG_DEEPSEEK.md` |
 | Claude | Deduped `dispute.ts`/`disputes.ts` id collision, fixed `sim/harness/chaos.ts` docker-cwd bug, full non-chaos sim run | ✅ **done** — 68/81 (rest triaged below) |
-| Codex | Round 4: fix real CONCURRENCY/HOLD/REVERSAL/LIMITS failures found by the full run | 🔵 **assigned, in progress** |
+| Codex | Round 4: fix real CONCURRENCY/HOLD/REVERSAL/LIMITS failures found by the full run | 🔵 **assigned, in progress — re-verified 2026-08-29 ~16:45, same 11 failures, no fix landed yet, left in place per user's call** |
 | DeepSeek | Round 3: notification feed, duplicate-send guard state, admin simulator presentation, canonical-screen cleanup | 🔵 assigned |
 | Antigravity | Round 5: `GET /money-requests/incoming` + `/outgoing` (documented, never built) | 🔵 assigned |
+| Antigravity | Round 6: notification writes off `moveMoney` + `GET /notifications` (queued — start after R5) | 🔵 assigned |
 
 **The whole backend boots and works end to end** — verified live: register
 (real signup-bonus ledger txn) → login → balance → lookup → step-up →
@@ -66,7 +67,7 @@ exists.
 | Agent | Scope | Task file |
 |---|---|---|
 | Codex | Fix real CONCURRENCY/HOLD/REVERSAL/LIMITS bugs found by the full sim run — scenario-vs-real-bug triage, minimal backend fix where the bug is real | `TASKS_CODEX.md` |
-| Antigravity | `GET /money-requests/incoming` + `/outgoing` — documented in `API.md`, never implemented, blocks DeepSeek's already-designed Inbox/Outbox screens | `TASKS_ANTIGRAVITY.md` |
+| Antigravity | R5: `GET /money-requests/incoming` + `/outgoing`. R6 (queued): notification rows off `moveMoney` (`ledger.outbox`/`notify.notifications` already existed in `SCHEMA.sql`, just never wired) + `GET /notifications` | `TASKS_ANTIGRAVITY.md` |
 | DeepSeek | Notification feed, duplicate-send guard state, admin simulator presentation, canonical Stitch-screen cleanup | `TASKS_DEEPSEEK.md` |
 
 Codex is the one agent working inside `transfers.service.ts`/
@@ -100,8 +101,10 @@ edits. DeepSeek's track (Stitch + `UI_SPEC.md`) never touches
 - [x] Codex R3: `sim/scenarios/validation.ts` (Auth/Query real-HTTP edge cases) — done, 14/14
 - [x] Antigravity R4: `sim/scenarios/dispute.ts` + `bills.ts` + `requests.ts` (own modules over real HTTP) — done, 11/11 + 5/5 + 5/5
 - [x] Claude: deduped `dispute.ts`/`disputes.ts`, fixed `chaos.ts` docker-cwd bug, full sim run (59/59 non-chaos-affected groups, chaos 2/3) — done
-- [ ] Codex R4: fix real CONCURRENCY/HOLD/REVERSAL/LIMITS bugs the full run surfaced
+- [ ] Codex R4: fix real CONCURRENCY/HOLD/REVERSAL/LIMITS bugs the full run surfaced — re-checked, not yet landed, left running
 - [ ] Antigravity R5: `GET /money-requests/incoming` + `/outgoing`
+- [ ] Antigravity R6: notification writes off `moveMoney` + `GET /notifications` — queued behind R5
+- [x] Claude: `infra/sql/006_notifications_claude.sql` — grants `txn_svc` write access to `notify.notifications`, applied
 - [ ] DeepSeek R3: notification feed, duplicate-send guard state, admin simulator presentation, canonical-screen cleanup
 - [ ] Frontend (`frontend/`, separate track, not covered by these task files): wire real API, including the new reputation field
 
